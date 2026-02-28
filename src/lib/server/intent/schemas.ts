@@ -3,8 +3,21 @@ import { z } from "zod";
 import {
   AssistantResponseSchema,
   CanvasStateSchema,
+  FlowStepSchema,
+  FormFieldSchema,
   IntentEventSchema
 } from "@/lib/contracts";
+
+const StrictIntentEventSchema = IntentEventSchema.strict();
+
+const StrictCanvasStateSchema = CanvasStateSchema.extend({
+  form_fields: z.array(FormFieldSchema.strict()),
+  flow_steps: z.array(FlowStepSchema.strict())
+}).strict();
+
+const StrictAssistantResponseSchema = AssistantResponseSchema.extend({
+  canvas_state: StrictCanvasStateSchema
+}).strict();
 
 export const ConversationContextSchema = z
   .object({
@@ -16,8 +29,8 @@ export const ConversationContextSchema = z
 export const IntentRequestSchema = z
   .object({
     session_id: z.string().min(1),
-    intent_event: IntentEventSchema,
-    canvas_state: CanvasStateSchema,
+    intent_event: StrictIntentEventSchema,
+    canvas_state: StrictCanvasStateSchema,
     conversation_context: ConversationContextSchema.optional()
   })
   .strict();
@@ -25,7 +38,7 @@ export const IntentRequestSchema = z
 export const IntentSuccessEnvelopeSchema = z
   .object({
     session_id: z.string().min(1),
-    response: AssistantResponseSchema
+    response: StrictAssistantResponseSchema
   })
   .strict();
 
