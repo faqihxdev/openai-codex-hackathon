@@ -32,6 +32,9 @@ Out of scope (post-MVP):
 
 ## 4. Shared Contracts (Draft)
 
+Canonical route map source: [`docs/api/v1-route-map.md`](./api/v1-route-map.md).
+Canonical error model source: [`docs/api/standard-api-error-model.md`](./api/standard-api-error-model.md).
+
 ### 4.1 Intent Event
 
 ```json
@@ -105,7 +108,7 @@ Out of scope (post-MVP):
 | `POST` | `/api/v1/deployments` | Start live Google deployment | Required |
 | `GET` | `/api/v1/deployments/{deployment_id}` | Poll deployment status and asset IDs | Required |
 | `POST` | `/api/v1/deployments/{deployment_id}/retry` | Retry failed step from latest checkpoint | Required |
-| `GET` | `/api/v1/templates` | Return starter process templates | Optional/Required |
+| `GET` | `/api/v1/templates` | Return starter process templates | Required |
 | `GET` | `/api/v1/health` | Service and dependency readiness | None |
 
 ## 6. Endpoint Drafts
@@ -267,7 +270,7 @@ Deployment endpoint should block when:
 
 1. Define shared Zod schemas and error model.
 2. Implement `POST /api/v1/intent` with strict response validation.
-3. Implement deploy orchestration (`POST /deployments`, `GET /deployments/{id}`).
+3. Implement deploy orchestration (`POST /api/v1/deployments`, `GET /api/v1/deployments/{deployment_id}`).
 4. Add retry endpoint and idempotency protections.
 5. Add templates endpoint for quick-start UX.
 6. Add health endpoint and minimal telemetry.
