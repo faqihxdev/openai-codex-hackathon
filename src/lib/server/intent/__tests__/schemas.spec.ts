@@ -58,6 +58,18 @@ describe("intent endpoint schemas", () => {
     });
 
     expect(parsed.success).toBe(false);
+    if (parsed.success) {
+      throw new Error("expected request schema validation to fail");
+    }
+
+    expect(parsed.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "unrecognized_keys",
+          path: []
+        })
+      ])
+    );
   });
 
   test("rejects unknown keys inside intent_event with actionable issue metadata", () => {
@@ -101,6 +113,18 @@ describe("intent endpoint schemas", () => {
     });
 
     expect(parsed.success).toBe(false);
+    if (parsed.success) {
+      throw new Error("expected request schema validation to fail");
+    }
+
+    expect(parsed.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "unrecognized_keys",
+          path: ["canvas_state", "form_fields", 0]
+        })
+      ])
+    );
   });
 
   test("rejects out-of-range previous_confidence in conversation_context", () => {
@@ -158,6 +182,18 @@ describe("intent endpoint schemas", () => {
     });
 
     expect(parsed.success).toBe(false);
+    if (parsed.success) {
+      throw new Error("expected response schema validation to fail");
+    }
+
+    expect(parsed.error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "unrecognized_keys",
+          path: []
+        })
+      ])
+    );
   });
 
   test("rejects unknown nested keys inside response.canvas_state with actionable metadata", () => {
