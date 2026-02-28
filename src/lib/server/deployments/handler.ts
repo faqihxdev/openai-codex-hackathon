@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
 
-import type { DeploymentStatus } from "@/lib/contracts";
+import { DeploymentStatusSchema, type DeploymentStatus } from "@/lib/contracts";
 import { createApiErrorResponse, type ApiErrorResponseBody } from "@/lib/errors";
 
+import {
+  DEPLOYMENT_PROGRESS_STEPS,
+  createInMemoryDeploymentsStore,
+  createQueuedDeploymentStatus,
+  type DeploymentsStore
+} from "./store";
 import {
   DeployWorkflowError,
   createGoogleWorkspaceDeployer,
@@ -13,20 +19,18 @@ import { toCanonicalJson } from "./hash";
 import {
   type DeploymentCreateAccepted,
   type DeploymentCreateRequest,
+  type DeploymentRetryAccepted,
   DeploymentCreateAcceptedSchema,
-  DeploymentCreateRequestSchema
+  DeploymentCreateRequestSchema,
+  DeploymentRetryAcceptedSchema
 } from "./schemas";
-import {
-  createInMemoryDeploymentsStore,
-  createQueuedDeploymentStatus,
-  type DeploymentsStore
-} from "./store";
 
 type RequestIdFactory = () => string;
 
 export interface DeploymentsHandlerDependencies {
   store: DeploymentsStore;
-  deployer: GoogleWorkspaceDeployer;
+  deployer?: GoogleWorkspaceDeployer;
+  enableGoogleWorkflow?: boolean;
   requestIdFactory?: RequestIdFactory;
 }
 
@@ -48,8 +52,39 @@ export type DeploymentsHandlerResult =
   | DeploymentsHandlerSuccessResult
   | DeploymentsHandlerErrorResult;
 
+export interface DeploymentStatusHandlerInput {
+  deployment_id: string;
+}
+
+export type DeploymentStatusHandlerSuccessResult = {
+  status: 200;
+  body: DeploymentStatus;
+};
+
+export type DeploymentStatusHandlerResult =
+  | DeploymentStatusHandlerSuccessResult
+  | DeploymentsHandlerErrorResult;
+
+export interface DeploymentRetryHandlerInput {
+  deployment_id: string;
+}
+
+export type DeploymentRetryHandlerSuccessResult = {
+  status: 202;
+  body: DeploymentRetryAccepted;
+};
+
+export type DeploymentRetryHandlerResult =
+  | DeploymentRetryHandlerSuccessResult
+  | DeploymentsHandlerErrorResult;
+
 function buildError(
-  code: "INVALID_SCHEMA" | "DEPLOY_NOT_READY" | "CONFLICT" | "INTERNAL_ERROR",
+  code:
+    | "INVALID_SCHEMA"
+    | "DEPLOY_NOT_READY"
+    | "CONFLICT"
+    | "NOT_FOUND"
+    | "INTERNAL_ERROR",
   request_id: string,
   details: Record<string, unknown>
 ): DeploymentsHandlerErrorResult {
@@ -71,6 +106,10 @@ function buildRequestHash(request: DeploymentCreateRequest): string {
       unresolved_questions: request.assistant_snapshot.unresolved_questions
     }
   });
+}
+
+function isLegacyProgressStep(step: string | undefined): boolean {
+  return Boolean(step && DEPLOYMENT_PROGRESS_STEPS.includes(step as (typeof DEPLOYMENT_PROGRESS_STEPS)[number]));
 }
 
 async function runDeploymentWorkflow(input: {
@@ -144,10 +183,12 @@ async function runDeploymentWorkflow(input: {
 
 export function createDeploymentsHandler(dependencies: DeploymentsHandlerDependencies) {
   const requestIdFactory = dependencies.requestIdFactory ?? randomUUID;
+  const deployer = dependencies.deployer ?? createMockGoogleWorkspaceDeployer();
+  const enableGoogleWorkflow = dependencies.enableGoogleWorkflow ?? false;
 
-  return async function handleDeployments(
+  return function handleDeployments(
     input: DeploymentsHandlerInput
-  ): Promise<DeploymentsHandlerResult> {
+  ): DeploymentsHandlerResult {
     const request_id = requestIdFactory();
 
     const parsedRequest = DeploymentCreateRequestSchema.safeParse(input.rawBody);
@@ -183,10 +224,10 @@ export function createDeploymentsHandler(dependencies: DeploymentsHandlerDepende
         });
       }
 
-      if (result.kind === "created") {
+      if (enableGoogleWorkflow && result.kind === "created") {
         void runDeploymentWorkflow({
           store: dependencies.store,
-          deployer: dependencies.deployer,
+          deployer,
           deployment: result.deployment,
           canvas_state: request.canvas_state
         });
@@ -196,7 +237,7 @@ export function createDeploymentsHandler(dependencies: DeploymentsHandlerDepende
         status: 202,
         body: DeploymentCreateAcceptedSchema.parse({
           deployment_id: result.deployment.deployment_id,
-          status: "queued"
+          status: result.deployment.status
         })
       };
     } catch (error) {
@@ -208,15 +249,124 @@ export function createDeploymentsHandler(dependencies: DeploymentsHandlerDepende
   };
 }
 
+export function createDeploymentStatusHandler(
+  dependencies: DeploymentsHandlerDependencies
+) {
+  const requestIdFactory = dependencies.requestIdFactory ?? randomUUID;
+
+  return function handleDeploymentStatus(
+    input: DeploymentStatusHandlerInput
+  ): DeploymentStatusHandlerResult {
+    const request_id = requestIdFactory();
+
+    if (!input.deployment_id) {
+      return buildError("INVALID_SCHEMA", request_id, {
+        deployment_id: input.deployment_id,
+        reason: "deployment_id_required"
+      });
+    }
+
+    try {
+      const existing = dependencies.store.getDeploymentById(input.deployment_id);
+      if (!existing) {
+        return buildError("NOT_FOUND", request_id, {
+          deployment_id: input.deployment_id
+        });
+      }
+
+      const shouldAutoAdvance =
+        existing.status === "queued" ||
+        (existing.status === "running" &&
+          isLegacyProgressStep(existing.progress?.current_step));
+
+      const deployment = shouldAutoAdvance
+        ? dependencies.store.advanceDeployment(input.deployment_id)
+        : existing;
+      if (!deployment) {
+        return buildError("NOT_FOUND", request_id, {
+          deployment_id: input.deployment_id
+        });
+      }
+
+      return {
+        status: 200,
+        body: DeploymentStatusSchema.parse(deployment)
+      };
+    } catch (error) {
+      return buildError("INTERNAL_ERROR", request_id, {
+        deployment_id: input.deployment_id,
+        reason: "unexpected_error",
+        error_message: error instanceof Error ? error.message : "unknown_error"
+      });
+    }
+  };
+}
+
+export function createDeploymentRetryHandler(
+  dependencies: DeploymentsHandlerDependencies
+) {
+  const requestIdFactory = dependencies.requestIdFactory ?? randomUUID;
+
+  return function handleDeploymentRetry(
+    input: DeploymentRetryHandlerInput
+  ): DeploymentRetryHandlerResult {
+    const request_id = requestIdFactory();
+
+    if (!input.deployment_id) {
+      return buildError("INVALID_SCHEMA", request_id, {
+        deployment_id: input.deployment_id,
+        reason: "deployment_id_required"
+      });
+    }
+
+    try {
+      const result = dependencies.store.retryDeployment(input.deployment_id);
+
+      if (result.kind === "not_found") {
+        return buildError("NOT_FOUND", request_id, {
+          deployment_id: input.deployment_id
+        });
+      }
+
+      if (result.kind === "conflict") {
+        return buildError("CONFLICT", request_id, {
+          deployment_id: input.deployment_id,
+          reason: result.reason
+        });
+      }
+
+      return {
+        status: 202,
+        body: DeploymentRetryAcceptedSchema.parse({
+          deployment_id: result.deployment.deployment_id,
+          status: result.deployment.status
+        })
+      };
+    } catch (error) {
+      return buildError("INTERNAL_ERROR", request_id, {
+        deployment_id: input.deployment_id,
+        reason: "unexpected_error",
+        error_message: error instanceof Error ? error.message : "unknown_error"
+      });
+    }
+  };
+}
+
 const defaultDeploymentsStore = createInMemoryDeploymentsStore();
 const defaultGoogleAccessToken = process.env.GOOGLE_WORKSPACE_ACCESS_TOKEN?.trim();
+const defaultEnableGoogleWorkflow = Boolean(defaultGoogleAccessToken);
 const defaultDeployer = defaultGoogleAccessToken
   ? createGoogleWorkspaceDeployer({
       accessToken: defaultGoogleAccessToken
     })
   : createMockGoogleWorkspaceDeployer();
 
-export const handleDeployments = createDeploymentsHandler({
+const defaultDependencies: DeploymentsHandlerDependencies = {
   store: defaultDeploymentsStore,
-  deployer: defaultDeployer
-});
+  deployer: defaultDeployer,
+  enableGoogleWorkflow: defaultEnableGoogleWorkflow
+};
+
+export const handleDeployments = createDeploymentsHandler(defaultDependencies);
+export const handleDeploymentStatus = createDeploymentStatusHandler(defaultDependencies);
+export const handleDeploymentRetry = createDeploymentRetryHandler(defaultDependencies);

@@ -1,13 +1,16 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  createDeploymentRetryHandler,
+  createDeploymentStatusHandler,
   createDeploymentsHandler
 } from "@/lib/server/deployments/handler";
-import type { GoogleWorkspaceDeployer } from "@/lib/server/deployments/google-workspace";
-import { DeployWorkflowError } from "@/lib/server/deployments/google-workspace";
+import type { DeploymentsStore } from "@/lib/server/deployments/store";
 import {
   createInMemoryDeploymentsStore
 } from "@/lib/server/deployments/store";
+import type { GoogleWorkspaceDeployer } from "@/lib/server/deployments/google-workspace";
+import { DeployWorkflowError } from "@/lib/server/deployments/google-workspace";
 
 function buildReadyPayload() {
   return {
@@ -58,15 +61,14 @@ function waitForBackgroundWork(): Promise<void> {
   });
 }
 
-describe("deployments handler", () => {
-  test("returns INVALID_SCHEMA for invalid payload", async () => {
+describe("deployments create handler", () => {
+  test("returns INVALID_SCHEMA for invalid payload", () => {
     const handler = createDeploymentsHandler({
       store: createInMemoryDeploymentsStore(),
-      deployer: buildSuccessDeployer(),
       requestIdFactory: () => "req-invalid"
     });
 
-    const result = await handler({
+    const result = handler({
       rawBody: {
         session_id: "",
         idempotency_key: ""
@@ -77,17 +79,16 @@ describe("deployments handler", () => {
     expect(result.body.error.code).toBe("INVALID_SCHEMA");
   });
 
-  test("returns DEPLOY_NOT_READY when snapshot says deploy is blocked", async () => {
+  test("returns DEPLOY_NOT_READY when snapshot says deploy is blocked", () => {
     const handler = createDeploymentsHandler({
       store: createInMemoryDeploymentsStore(),
-      deployer: buildSuccessDeployer(),
       requestIdFactory: () => "req-not-ready"
     });
     const payload = buildReadyPayload();
     payload.assistant_snapshot.deploy_ready = false;
     payload.assistant_snapshot.deploy_readiness_reasons = ["Critical unresolved questions remain."];
 
-    const result = await handler({
+    const result = handler({
       rawBody: payload
     });
 
@@ -98,14 +99,13 @@ describe("deployments handler", () => {
     ]);
   });
 
-  test("returns 202 with deployment id for first valid request", async () => {
+  test("returns 202 with deployment id for first valid request", () => {
     const handler = createDeploymentsHandler({
       store: createInMemoryDeploymentsStore(),
-      deployer: buildSuccessDeployer(),
       requestIdFactory: () => "req-created"
     });
 
-    const result = await handler({
+    const result = handler({
       rawBody: buildReadyPayload()
     });
 
@@ -116,18 +116,17 @@ describe("deployments handler", () => {
     }
   });
 
-  test("returns same deployment id for idempotent replay", async () => {
+  test("returns same deployment id for idempotent replay", () => {
     const handler = createDeploymentsHandler({
       store: createInMemoryDeploymentsStore(),
-      deployer: buildSuccessDeployer(),
       requestIdFactory: () => "req-replay"
     });
     const payload = buildReadyPayload();
 
-    const first = await handler({
+    const first = handler({
       rawBody: payload
     });
-    const replay = await handler({
+    const replay = handler({
       rawBody: payload
     });
 
@@ -138,20 +137,19 @@ describe("deployments handler", () => {
     }
   });
 
-  test("returns CONFLICT when idempotency key is reused with different payload", async () => {
+  test("returns CONFLICT when idempotency key is reused with different payload", () => {
     const handler = createDeploymentsHandler({
       store: createInMemoryDeploymentsStore(),
-      deployer: buildSuccessDeployer(),
       requestIdFactory: () => "req-conflict"
     });
     const firstPayload = buildReadyPayload();
     const secondPayload = buildReadyPayload();
     secondPayload.assistant_snapshot.confidence = 0.77;
 
-    await handler({
+    handler({
       rawBody: firstPayload
     });
-    const conflict = await handler({
+    const conflict = handler({
       rawBody: secondPayload
     });
 
@@ -167,10 +165,11 @@ describe("deployments handler", () => {
     const handler = createDeploymentsHandler({
       store,
       deployer: buildSuccessDeployer(),
+      enableGoogleWorkflow: true,
       requestIdFactory: () => "req-success"
     });
 
-    const result = await handler({
+    const result = handler({
       rawBody: buildReadyPayload()
     });
 
@@ -201,10 +200,11 @@ describe("deployments handler", () => {
     const handler = createDeploymentsHandler({
       store,
       deployer: failingDeployer,
+      enableGoogleWorkflow: true,
       requestIdFactory: () => "req-failed"
     });
 
-    const result = await handler({
+    const result = handler({
       rawBody: buildReadyPayload()
     });
 
@@ -237,10 +237,11 @@ describe("deployments handler", () => {
     const handler = createDeploymentsHandler({
       store,
       deployer: structuredFailureDeployer,
+      enableGoogleWorkflow: true,
       requestIdFactory: () => "req-structured-failed"
     });
 
-    const result = await handler({
+    const result = handler({
       rawBody: buildReadyPayload()
     });
 
@@ -256,5 +257,225 @@ describe("deployments handler", () => {
     expect(persisted?.progress?.failed_step).toBe("create_sheet");
     expect(persisted?.progress?.current_step).toBe("create_sheet");
     expect(persisted?.progress?.completed_steps).toEqual(["create_form"]);
+  });
+});
+
+describe("deployments status and retry handlers", () => {
+  test("returns NOT_FOUND when status is requested for unknown deployment", () => {
+    const statusHandler = createDeploymentStatusHandler({
+      store: createInMemoryDeploymentsStore(),
+      requestIdFactory: () => "req-status-not-found"
+    });
+
+    const result = statusHandler({
+      deployment_id: "missing-id"
+    });
+
+    expect(result.status).toBe(404);
+    expect(result.body.error.code).toBe("NOT_FOUND");
+  });
+
+  test("advances deployment status across polling requests", () => {
+    const store = createInMemoryDeploymentsStore();
+    const createHandler = createDeploymentsHandler({
+      store,
+      requestIdFactory: () => "req-create"
+    });
+    const statusHandler = createDeploymentStatusHandler({
+      store,
+      requestIdFactory: () => "req-status"
+    });
+
+    const created = createHandler({
+      rawBody: buildReadyPayload()
+    });
+    if (created.status !== 202) {
+      throw new Error("Expected deployment creation to succeed");
+    }
+
+    const firstPoll = statusHandler({
+      deployment_id: created.body.deployment_id
+    });
+    expect(firstPoll.status).toBe(200);
+    if (firstPoll.status === 200) {
+      expect(firstPoll.body.status).toBe("running");
+      expect(firstPoll.body.progress?.current_step).toBe("Auth");
+    }
+
+    let latest = firstPoll;
+    for (let index = 0; index < 5; index += 1) {
+      latest = statusHandler({
+        deployment_id: created.body.deployment_id
+      });
+    }
+
+    expect(latest.status).toBe(200);
+    if (latest.status === 200) {
+      expect(latest.body.status).toBe("succeeded");
+      expect(latest.body.progress?.completed_steps).toEqual([
+        "Auth",
+        "Form",
+        "Sheet",
+        "Script",
+        "Trigger"
+      ]);
+    }
+  });
+
+  test("returns CONFLICT when retry is called for a deployment that has not failed", () => {
+    const store = createInMemoryDeploymentsStore();
+    const createHandler = createDeploymentsHandler({
+      store,
+      requestIdFactory: () => "req-create"
+    });
+    const retryHandler = createDeploymentRetryHandler({
+      store,
+      requestIdFactory: () => "req-retry"
+    });
+
+    const created = createHandler({
+      rawBody: buildReadyPayload()
+    });
+    if (created.status !== 202) {
+      throw new Error("Expected deployment creation to succeed");
+    }
+
+    const retry = retryHandler({
+      deployment_id: created.body.deployment_id
+    });
+    expect(retry.status).toBe(409);
+    expect(retry.body.error.code).toBe("CONFLICT");
+    expect(retry.body.error.details.reason).toBe("deployment_not_failed");
+  });
+
+  test("retries from a failed checkpoint deployment", () => {
+    const store = createInMemoryDeploymentsStore();
+    const createHandler = createDeploymentsHandler({
+      store,
+      requestIdFactory: () => "req-create"
+    });
+    const statusHandler = createDeploymentStatusHandler({
+      store,
+      requestIdFactory: () => "req-status"
+    });
+    const retryHandler = createDeploymentRetryHandler({
+      store,
+      requestIdFactory: () => "req-retry"
+    });
+
+    const payload = buildReadyPayload();
+    payload.idempotency_key = "deploy-sess-123-fail-once-v1";
+    const created = createHandler({
+      rawBody: payload
+    });
+    if (created.status !== 202) {
+      throw new Error("Expected deployment creation to succeed");
+    }
+
+    for (let index = 0; index < 5; index += 1) {
+      statusHandler({
+        deployment_id: created.body.deployment_id
+      });
+    }
+
+    const failed = statusHandler({
+      deployment_id: created.body.deployment_id
+    });
+    expect(failed.status).toBe(200);
+    if (failed.status === 200) {
+      expect(failed.body.status).toBe("failed");
+      expect(failed.body.progress?.failed_step).toBe("Script");
+    }
+
+    const retried = retryHandler({
+      deployment_id: created.body.deployment_id
+    });
+    expect(retried.status).toBe(202);
+    if (retried.status === 202) {
+      expect(retried.body.status).toBe("running");
+    }
+  });
+});
+
+describe("deployments handlers internal errors", () => {
+  const throwingStore: DeploymentsStore = {
+    createOrGetDeployment() {
+      throw new Error("store unavailable");
+    },
+    getDeploymentById() {
+      return null;
+    },
+    saveDeployment() {
+      throw new Error("save unavailable");
+    },
+    advanceDeployment() {
+      throw new Error("status unavailable");
+    },
+    retryDeployment() {
+      throw new Error("retry unavailable");
+    }
+  };
+
+  test("returns INTERNAL_ERROR for create handler store failures", () => {
+    const handler = createDeploymentsHandler({
+      store: throwingStore,
+      requestIdFactory: () => "req-throws"
+    });
+
+    const result = handler({
+      rawBody: buildReadyPayload()
+    });
+
+    expect(result.status).toBe(500);
+    expect(result.body.error.code).toBe("INTERNAL_ERROR");
+    expect(result.body.error.details.reason).toBe("unexpected_error");
+  });
+
+  test("returns INTERNAL_ERROR for status handler store failures", () => {
+    const statusThrowingStore: DeploymentsStore = {
+      ...throwingStore,
+      getDeploymentById() {
+        return {
+          deployment_id: "dep-1",
+          status: "queued",
+          assets: {
+            form_id: null,
+            spreadsheet_id: null,
+            script_id: null
+          },
+          error: null,
+          progress: {
+            current_step: "Auth",
+            completed_steps: [],
+            failed_step: null
+          }
+        };
+      }
+    };
+    const handler = createDeploymentStatusHandler({
+      store: statusThrowingStore,
+      requestIdFactory: () => "req-status-throws"
+    });
+
+    const result = handler({
+      deployment_id: "dep-1"
+    });
+
+    expect(result.status).toBe(500);
+    expect(result.body.error.code).toBe("INTERNAL_ERROR");
+  });
+
+  test("returns INTERNAL_ERROR for retry handler store failures", () => {
+    const handler = createDeploymentRetryHandler({
+      store: throwingStore,
+      requestIdFactory: () => "req-retry-throws"
+    });
+
+    const result = handler({
+      deployment_id: "dep-1"
+    });
+
+    expect(result.status).toBe(500);
+    expect(result.body.error.code).toBe("INTERNAL_ERROR");
   });
 });

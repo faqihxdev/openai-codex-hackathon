@@ -38,12 +38,14 @@ export type {
 export {
   DeploymentAssistantSnapshotSchema,
   DeploymentCreateAcceptedSchema,
-  DeploymentCreateRequestSchema
+  DeploymentCreateRequestSchema,
+  DeploymentRetryAcceptedSchema
 } from "./deployment-create";
 export type {
   DeploymentAssistantSnapshot,
   DeploymentCreateAccepted,
-  DeploymentCreateRequest
+  DeploymentCreateRequest,
+  DeploymentRetryAccepted
 } from "./deployment-create";
 
 export {
