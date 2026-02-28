@@ -219,8 +219,8 @@ describe("intent handler", () => {
     ]);
     expect(result.body.response.deploy_ready).toBe(false);
     expect(result.body.response.deploy_readiness_reasons).toEqual([
-      "Confidence 20% is below 75% readiness threshold.",
-      "Resolve unresolved questions before deploy (1 remaining)."
+      "Critical unresolved questions remain.",
+      "Fallback response requires additional clarification before deployment."
     ]);
   });
 

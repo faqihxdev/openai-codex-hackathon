@@ -343,10 +343,10 @@ export function processIntentEvent(request: IntentPipelineRequest): AssistantRes
   const unresolvedQuestions = deriveUnresolvedQuestions(nextCanvasState);
   const nextActions = deriveNextActions(nextCanvasState, unresolvedQuestions);
   const confidence = deriveConfidence(nextCanvasState, unresolvedQuestions);
-  const deployReadiness = evaluateDeployReadiness({
-    canvas_state: nextCanvasState,
+  const readiness = evaluateDeployReadiness({
     confidence,
-    unresolved_questions: unresolvedQuestions
+    unresolved_questions: unresolvedQuestions,
+    canvas_state: nextCanvasState
   });
 
   return AssistantResponseSchema.parse({
@@ -356,7 +356,7 @@ export function processIntentEvent(request: IntentPipelineRequest): AssistantRes
     confidence,
     unresolved_questions: unresolvedQuestions,
     next_actions: nextActions,
-    deploy_ready: deployReadiness.deploy_ready,
-    deploy_readiness_reasons: deployReadiness.deploy_readiness_reasons
+    deploy_ready: readiness.deploy_ready,
+    deploy_readiness_reasons: readiness.deploy_readiness_reasons
   });
 }

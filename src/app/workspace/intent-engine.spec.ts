@@ -17,6 +17,8 @@ describe("intent processing engine", () => {
     });
 
     expect(afterStep.unresolved_questions).toContain("Who approves requests above 5000?");
+    expect(afterStep.deploy_ready).toBe(false);
+    expect(afterStep.deploy_readiness_reasons).toContain("Critical unresolved questions remain.");
 
     const afterAnswer = processIntentEvent({
       intent_event: normalizeAnswerApproverIntent("Finance Lead"),
@@ -25,6 +27,8 @@ describe("intent processing engine", () => {
 
     expect(afterAnswer.unresolved_questions).toEqual([]);
     expect(afterAnswer.canvas_state.flow_steps.some((step) => /Finance Lead/.test(step.label))).toBe(true);
+    expect(afterAnswer.deploy_ready).toBe(true);
+    expect(afterAnswer.deploy_readiness_reasons).toEqual([]);
   });
 
   it("returns deploy_ready=false with reasons when confidence and unresolved blockers fail", () => {
@@ -84,5 +88,7 @@ describe("intent processing engine", () => {
     expect(response.deploy_readiness_reasons).toEqual([
       "Confidence 65% is below 75% readiness threshold."
     ]);
+    expect(response).toHaveProperty("deploy_ready");
+    expect(response).toHaveProperty("deploy_readiness_reasons");
   });
 });
