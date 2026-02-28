@@ -1,8 +1,29 @@
 import { describe, expect, test, vi } from "vitest";
 
 import type { AssistantResponse } from "@/lib/contracts";
-import { createIntentHandler } from "@/lib/server/intent/handler";
+import {
+  createIntentHandler,
+  type IntentHandlerErrorResult,
+  type IntentHandlerResult,
+  type IntentHandlerSuccessResult
+} from "@/lib/server/intent/handler";
 import type { IntentRequest } from "@/lib/server/intent/schemas";
+
+function assertErrorResult(
+  result: IntentHandlerResult,
+  expectedStatus: number
+): asserts result is IntentHandlerErrorResult {
+  expect(result.status).toBe(expectedStatus);
+  expect(result.body).toHaveProperty("error");
+}
+
+function assertSuccessResult(
+  result: IntentHandlerResult
+): asserts result is IntentHandlerSuccessResult {
+  expect(result.status).toBe(200);
+  expect(result.body).toHaveProperty("session_id");
+  expect(result.body).toHaveProperty("response");
+}
 
 function buildValidIntentRequest(): IntentRequest {
   return {
@@ -78,7 +99,7 @@ describe("intent handler", () => {
       auth: { user_id: "user-123" }
     });
 
-    expect(result.status).toBe(400);
+    assertErrorResult(result, 400);
     expect(result.body.error.code).toBe("INVALID_SCHEMA");
     expect(result.body.error.request_id).toBe("req-invalid");
   });
@@ -95,7 +116,7 @@ describe("intent handler", () => {
       auth: { user_id: null }
     });
 
-    expect(result.status).toBe(401);
+    assertErrorResult(result, 401);
     expect(result.body.error.code).toBe("UNAUTHORIZED");
     expect(result.body.error.request_id).toBe("req-unauthorized");
   });
@@ -112,7 +133,7 @@ describe("intent handler", () => {
       auth: { user_id: "user-123" }
     });
 
-    expect(result.status).toBe(403);
+    assertErrorResult(result, 403);
     expect(result.body.error.code).toBe("FORBIDDEN");
     expect(result.body.error.request_id).toBe("req-forbidden");
     expect(result.body.error.details.reason).toBe("session_access_denied");
@@ -130,7 +151,7 @@ describe("intent handler", () => {
       auth: { user_id: "user-123" }
     });
 
-    expect(result.status).toBe(500);
+    assertErrorResult(result, 500);
     expect(result.body.error.code).toBe("INTERNAL_ERROR");
     expect(result.body.error.request_id).toBe("req-auth-throws");
     expect(result.body.error.details.reason).toBe("unexpected_error");
@@ -148,7 +169,7 @@ describe("intent handler", () => {
       auth: { user_id: "user-123" }
     });
 
-    expect(result.status).toBe(500);
+    assertErrorResult(result, 500);
     expect(result.body.error.code).toBe("INTERNAL_ERROR");
     expect(result.body.error.request_id).toBe("req-process-throws");
     expect(result.body.error.details.reason).toBe("unexpected_error");
@@ -174,7 +195,7 @@ describe("intent handler", () => {
       auth: { user_id: "user-123" }
     });
 
-    expect(result.status).toBe(500);
+    assertErrorResult(result, 500);
     expect(result.body.error.code).toBe("INTERNAL_ERROR");
     expect(result.body.error.request_id).toBe("req-invalid-assistant-response");
     expect(result.body.error.details.reason).toBe("invalid_assistant_response");
@@ -194,7 +215,7 @@ describe("intent handler", () => {
       auth: { user_id: "user-123" }
     });
 
-    expect(result.status).toBe(200);
+    assertSuccessResult(result);
     expect(result.body.session_id).toBe("sess-123");
     expect(result.body.response.chat_reply).toBe("Added Requester Name.");
     expect(processIntent).toHaveBeenCalledWith({
