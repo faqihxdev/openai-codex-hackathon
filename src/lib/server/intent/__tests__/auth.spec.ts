@@ -44,6 +44,11 @@ describe("intent auth guard", () => {
         session_id: "sess-123"
       }
     });
+    expect(authorizeSession).toHaveBeenCalledOnce();
+    expect(authorizeSession).toHaveBeenCalledWith({
+      user_id: "user-123",
+      session_id: "sess-123"
+    });
   });
 
   test("returns ok with identifiers when session access is allowed", async () => {
@@ -58,6 +63,52 @@ describe("intent auth guard", () => {
     expect(result).toEqual({
       ok: true,
       user_id: "user-123",
+      session_id: "sess-123"
+    });
+    expect(authorizeSession).toHaveBeenCalledOnce();
+    expect(authorizeSession).toHaveBeenCalledWith({
+      user_id: "user-123",
+      session_id: "sess-123"
+    });
+  });
+
+  test("returns UNAUTHORIZED when user_id is whitespace-only", async () => {
+    const authorizeSession = vi.fn<AuthorizeSession>();
+
+    const result = await guardIntentAccess({
+      context: { user_id: "   " },
+      session_id: "sess-123",
+      authorizeSession
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      code: "UNAUTHORIZED",
+      details: {
+        reason: "missing_user_id",
+        session_id: "sess-123"
+      }
+    });
+    expect(authorizeSession).not.toHaveBeenCalled();
+  });
+
+  test("normalizes trimmed user_id before authorization", async () => {
+    const authorizeSession = vi.fn<AuthorizeSession>().mockResolvedValue(true);
+
+    const result = await guardIntentAccess({
+      context: { user_id: " user-1 " },
+      session_id: "sess-123",
+      authorizeSession
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      user_id: "user-1",
+      session_id: "sess-123"
+    });
+    expect(authorizeSession).toHaveBeenCalledOnce();
+    expect(authorizeSession).toHaveBeenCalledWith({
+      user_id: "user-1",
       session_id: "sess-123"
     });
   });
