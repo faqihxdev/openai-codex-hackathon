@@ -1,9 +1,14 @@
 "use client";
 
 import * as Tabs from "@radix-ui/react-tabs";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { FlowCanvas } from "@/app/workspace/flow-canvas";
+import {
+  DeploymentCreateAcceptedSchema,
+  DeploymentRetryAcceptedSchema,
+  DeploymentStatusSchema
+} from "@/lib/contracts";
 import type { AssistantResponse } from "@/lib/contracts/assistant-response";
 import { AssistantResponseSchema } from "@/lib/contracts/assistant-response";
 import type { CanvasState } from "@/lib/contracts/canvas-state";
@@ -30,22 +35,10 @@ import { cn } from "@/lib/utils/cn";
 
 const sessionId = "workspace-demo-session";
 const APPROVER_OPTIONS = ["Finance Lead", "Department Head", "Operations Manager"];
+const DEPLOYMENT_STEPS = ["Auth", "Form", "Sheet", "Script", "Trigger"] as const;
 
-const deploymentStatus: DeploymentStatus = {
-  deployment_id: "dep_001",
-  status: "queued",
-  assets: {
-    form_id: null,
-    spreadsheet_id: null,
-    script_id: null
-  },
-  error: null,
-  progress: {
-    current_step: "Auth",
-    completed_steps: [],
-    failed_step: null
-  }
-};
+type DeploymentStep = (typeof DEPLOYMENT_STEPS)[number];
+type DeploymentStepState = "pending" | "active" | "complete" | "failed";
 
 function createInitialAssistantResponse(canvasState: CanvasState): AssistantResponse {
   const unresolvedQuestions = [APPROVER_QUESTION];
@@ -76,6 +69,82 @@ function isBusinessJustificationRequired(canvasState: CanvasState): boolean {
   return canvasState.form_fields.some((field) => field.label === "Business justification" && field.required);
 }
 
+function getDeploymentChipTone(
+  status: DeploymentStatus["status"] | null
+): "neutral" | "success" | "warning" | "danger" | "accent" {
+  if (status === "succeeded") {
+    return "success";
+  }
+  if (status === "failed") {
+    return "danger";
+  }
+  if (status === "running") {
+    return "accent";
+  }
+  if (status === "queued") {
+    return "warning";
+  }
+
+  return "neutral";
+}
+
+function getStepState(
+  deploymentStatus: DeploymentStatus | null,
+  step: DeploymentStep
+): DeploymentStepState {
+  if (!deploymentStatus) {
+    return "pending";
+  }
+
+  const progress = deploymentStatus.progress;
+  if (deploymentStatus.status === "succeeded") {
+    return "complete";
+  }
+  if (progress?.failed_step === step) {
+    return "failed";
+  }
+  if (progress?.completed_steps.includes(step)) {
+    return "complete";
+  }
+  if (
+    progress?.current_step === step &&
+    (deploymentStatus.status === "queued" || deploymentStatus.status === "running")
+  ) {
+    return "active";
+  }
+
+  return "pending";
+}
+
+function extractApiErrorMessage(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || !("error" in payload)) {
+    return null;
+  }
+
+  const maybeError = (payload as { error?: unknown }).error;
+  if (!maybeError || typeof maybeError !== "object") {
+    return null;
+  }
+
+  const maybeMessage = (maybeError as { message?: unknown }).message;
+  if (typeof maybeMessage === "string" && maybeMessage.length > 0) {
+    return maybeMessage;
+  }
+
+  const maybeDetails = (maybeError as { details?: unknown }).details;
+  if (!maybeDetails || typeof maybeDetails !== "object") {
+    return null;
+  }
+
+  const reasons = (maybeDetails as { deploy_readiness_reasons?: unknown })
+    .deploy_readiness_reasons;
+  if (Array.isArray(reasons) && typeof reasons[0] === "string") {
+    return reasons[0];
+  }
+
+  return null;
+}
+
 const railTabClassName =
   "min-h-11 rounded-control px-2 py-2 text-sm font-semibold text-muted transition-colors duration-hover ease-editorial hover:text-ink data-[state=active]:bg-surface-2 data-[state=active]:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 const chipButtonClassName =
@@ -91,10 +160,16 @@ export default function WorkspacePage() {
   const [approverAnswer, setApproverAnswer] = useState(APPROVER_OPTIONS[0]);
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [deploymentStatus, setDeploymentStatus] = useState<DeploymentStatus | null>(null);
+  const [deploymentActionBusy, setDeploymentActionBusy] = useState(false);
+  const [deploymentMessage, setDeploymentMessage] = useState<string | null>(null);
   const inFlightRef = useRef(false);
   const canvasStateRef = useRef(canvasState);
   const unresolvedQuestionsRef = useRef(assistantResponse.unresolved_questions);
   const confidenceRef = useRef(assistantResponse.confidence);
+  const deploymentPollTimeoutRef = useRef<number | null>(null);
+  const deploymentIdRef = useRef<string | null>(null);
+  const deploymentSequenceRef = useRef(0);
 
   useEffect(() => {
     canvasStateRef.current = canvasState;
@@ -105,14 +180,40 @@ export default function WorkspacePage() {
     confidenceRef.current = assistantResponse.confidence;
   }, [assistantResponse]);
 
+  useEffect(
+    () => () => {
+      if (deploymentPollTimeoutRef.current !== null) {
+        window.clearTimeout(deploymentPollTimeoutRef.current);
+      }
+    },
+    []
+  );
+
   const unresolvedCount = assistantResponse.unresolved_questions.length;
-  const deployBlocked = !assistantResponse.deploy_ready || busy;
+  const deploymentInFlight =
+    deploymentStatus?.status === "queued" || deploymentStatus?.status === "running";
+  const deployBlockedByReadiness = !assistantResponse.deploy_ready;
+  const deployBlocked = deployBlockedByReadiness || busy || deploymentActionBusy || deploymentInFlight;
   const approvalThresholdEnabled = hasThreshold(canvasState);
   const businessJustificationRequired = isBusinessJustificationRequired(canvasState);
   const deployReadinessReasons = assistantResponse.deploy_readiness_reasons;
   const additionalReadinessReasons = deployReadinessReasons.filter(
     (reason) => !/unresolved questions/i.test(reason)
   );
+  const deployActionLabel = deployBlockedByReadiness
+    ? "Resolve blockers to deploy"
+    : deploymentInFlight || deploymentActionBusy
+      ? "Deployment running..."
+      : "Deploy to Google Workspace";
+  const deploymentChipLabel = deploymentStatus?.status ?? "idle";
+  const deploymentChipTone = getDeploymentChipTone(deploymentStatus?.status ?? null);
+
+  function clearDeploymentPoll() {
+    if (deploymentPollTimeoutRef.current !== null) {
+      window.clearTimeout(deploymentPollTimeoutRef.current);
+      deploymentPollTimeoutRef.current = null;
+    }
+  }
 
   function commitCanvasState(nextCanvasState: CanvasState) {
     setCanvasState(nextCanvasState);
@@ -144,6 +245,177 @@ export default function WorkspacePage() {
 
   function removeCanvasStep(stepId: string) {
     void dispatchIntent(normalizeCanvasRemoveStepIntent(stepId));
+  }
+
+  async function readApiErrorMessage(response: Response, fallback: string): Promise<string> {
+    try {
+      const parsedBody = (await response.json()) as unknown;
+      const parsedMessage = extractApiErrorMessage(parsedBody);
+      if (parsedMessage) {
+        return parsedMessage;
+      }
+    } catch {
+      return fallback;
+    }
+
+    return fallback;
+  }
+
+  async function pollDeploymentStatus(deployment_id: string) {
+    try {
+      const response = await fetch(`/api/v1/deployments/${deployment_id}`, {
+        method: "GET"
+      });
+      if (!response.ok) {
+        throw new Error(
+          await readApiErrorMessage(
+            response,
+            `Unable to fetch deployment status (${response.status}).`
+          )
+        );
+      }
+
+      const nextStatus = DeploymentStatusSchema.parse(await response.json());
+      if (deploymentIdRef.current !== deployment_id) {
+        return;
+      }
+
+      setDeploymentStatus(nextStatus);
+      if (nextStatus.status === "queued" || nextStatus.status === "running") {
+        clearDeploymentPoll();
+        deploymentPollTimeoutRef.current = window.setTimeout(() => {
+          void pollDeploymentStatus(deployment_id);
+        }, 900);
+        return;
+      }
+
+      clearDeploymentPoll();
+      if (nextStatus.status === "succeeded") {
+        setDeploymentMessage("Deployment completed successfully.");
+      }
+    } catch (error) {
+      const fallbackMessage =
+        error instanceof Error ? error.message : "Unable to fetch deployment status.";
+      setDeploymentMessage(fallbackMessage);
+      clearDeploymentPoll();
+    }
+  }
+
+  async function startDeployment() {
+    if (deployBlocked) {
+      return;
+    }
+
+    clearDeploymentPoll();
+    setDeploymentActionBusy(true);
+    setDeploymentMessage(null);
+
+    try {
+      deploymentSequenceRef.current += 1;
+      const idempotency_key = `deploy-${sessionId}-${deploymentSequenceRef.current}`;
+      const response = await fetch("/api/v1/deployments", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          canvas_state: canvasStateRef.current,
+          idempotency_key,
+          assistant_snapshot: {
+            confidence: confidenceRef.current,
+            unresolved_questions: unresolvedQuestionsRef.current,
+            deploy_ready: assistantResponse.deploy_ready,
+            deploy_readiness_reasons: assistantResponse.deploy_readiness_reasons
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          await readApiErrorMessage(
+            response,
+            `Deployment request failed (${response.status}).`
+          )
+        );
+      }
+
+      const accepted = DeploymentCreateAcceptedSchema.parse(await response.json());
+      deploymentIdRef.current = accepted.deployment_id;
+      setDeploymentStatus({
+        deployment_id: accepted.deployment_id,
+        status: accepted.status,
+        assets: {
+          form_id: null,
+          spreadsheet_id: null,
+          script_id: null
+        },
+        error: null,
+        progress: {
+          current_step: DEPLOYMENT_STEPS[0],
+          completed_steps: [],
+          failed_step: null
+        }
+      });
+      await pollDeploymentStatus(accepted.deployment_id);
+    } catch (error) {
+      const fallbackMessage =
+        error instanceof Error ? error.message : "Unable to start deployment.";
+      setDeploymentMessage(fallbackMessage);
+    } finally {
+      setDeploymentActionBusy(false);
+    }
+  }
+
+  async function retryFailedDeployment() {
+    if (!deploymentStatus || deploymentStatus.status !== "failed") {
+      return;
+    }
+
+    clearDeploymentPoll();
+    setDeploymentActionBusy(true);
+    setDeploymentMessage(null);
+
+    try {
+      const response = await fetch(
+        `/api/v1/deployments/${deploymentStatus.deployment_id}/retry`,
+        {
+          method: "POST"
+        }
+      );
+      if (!response.ok) {
+        throw new Error(
+          await readApiErrorMessage(response, `Retry request failed (${response.status}).`)
+        );
+      }
+
+      const accepted = DeploymentRetryAcceptedSchema.parse(await response.json());
+      deploymentIdRef.current = accepted.deployment_id;
+      setDeploymentStatus((previous) => {
+        if (!previous || previous.deployment_id !== accepted.deployment_id) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          status: accepted.status,
+          error: null,
+          progress: previous.progress
+            ? {
+                ...previous.progress,
+                failed_step: null
+              }
+            : previous.progress
+        };
+      });
+      await pollDeploymentStatus(accepted.deployment_id);
+    } catch (error) {
+      const fallbackMessage =
+        error instanceof Error ? error.message : "Unable to retry deployment.";
+      setDeploymentMessage(fallbackMessage);
+    } finally {
+      setDeploymentActionBusy(false);
+    }
   }
 
   async function dispatchIntent(intentEvent: IntentEvent) {
@@ -191,24 +463,26 @@ export default function WorkspacePage() {
     }
   }
 
-  const topBar = useMemo(
-    () => (
-      <>
-        <div>
-          <p className="font-display text-2xl font-bold">Editorial Control Room</p>
-          <p className="text-meta text-muted">{canvasState.process_name}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <StatusChip tone="accent">Confidence {Math.round(assistantResponse.confidence * 100)}%</StatusChip>
-          <StatusChip tone={unresolvedCount > 0 ? "warning" : "success"}>{unresolvedCount} unresolved</StatusChip>
-          <StatusChip tone="neutral">{deploymentStatus.status}</StatusChip>
-          <PrimaryAction disabled={deployBlocked} className="hidden lg:inline-flex">
-            {deployBlocked ? "Resolve blockers to deploy" : "Deploy to Google Workspace"}
-          </PrimaryAction>
-        </div>
-      </>
-    ),
-    [assistantResponse.confidence, canvasState.process_name, deployBlocked, unresolvedCount]
+  const topBar = (
+    <>
+      <div>
+        <p className="font-display text-2xl font-bold">Editorial Control Room</p>
+        <p className="text-meta text-muted">{canvasState.process_name}</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <StatusChip tone="accent">Confidence {Math.round(assistantResponse.confidence * 100)}%</StatusChip>
+        <StatusChip tone={unresolvedCount > 0 ? "warning" : "success"}>{unresolvedCount} unresolved</StatusChip>
+        <StatusChip tone={deploymentChipTone}>{deploymentChipLabel}</StatusChip>
+        <PrimaryAction
+          disabled={deployBlocked}
+          busy={deploymentActionBusy}
+          className="hidden lg:inline-flex"
+          onClick={() => void startDeployment()}
+        >
+          {deployActionLabel}
+        </PrimaryAction>
+      </div>
+    </>
   );
 
   const conversationPanel = (
@@ -369,6 +643,89 @@ export default function WorkspacePage() {
     </Panel>
   );
 
+  const deployPanelContent = (
+    <div className="space-y-4">
+      <ol className="grid gap-2 sm:grid-cols-5" aria-label="Deployment stepper">
+        {DEPLOYMENT_STEPS.map((step) => {
+          const stepState = getStepState(deploymentStatus, step);
+          const stepIndex = DEPLOYMENT_STEPS.indexOf(step) + 1;
+
+          return (
+            <li
+              key={step}
+              className={cn(
+                "rounded-control border px-3 py-2 text-sm",
+                stepState === "complete" && "border-success bg-success/10 text-success",
+                stepState === "active" && "border-accent bg-accent/10 text-accent",
+                stepState === "failed" && "border-danger bg-danger/10 text-danger",
+                stepState === "pending" && "border-line bg-surface text-muted"
+              )}
+            >
+              <p className="text-meta">Step {stepIndex}</p>
+              <p className="font-semibold">{step}</p>
+            </li>
+          );
+        })}
+      </ol>
+
+      <p className="text-sm text-ink">
+        Current step: {deploymentStatus?.progress?.current_step ?? "Awaiting deploy start"}
+      </p>
+
+      {deployBlockedByReadiness ? (
+        <ul className="space-y-2">
+          {deployReadinessReasons.map((reason, index) => (
+            <li key={`${reason}-${index}`} className="rounded-control border border-warning bg-surface p-3 text-sm text-ink">
+              {reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {deploymentStatus?.status === "failed" ? (
+        <div className="rounded-control border border-danger bg-danger/10 p-3">
+          <p className="text-sm font-semibold text-danger">
+            Failed at step: {deploymentStatus.progress?.failed_step ?? "Unknown"}
+          </p>
+          <p className="mt-1 text-sm text-ink">
+            {deploymentStatus.error?.message ?? "Deployment failed. Retry from the failed step."}
+          </p>
+        </div>
+      ) : null}
+
+      {deploymentStatus?.status === "succeeded" ? (
+        <ul className="space-y-2 rounded-control border border-success bg-success/10 p-3 text-sm text-ink">
+          <li>Form ID: {deploymentStatus.assets.form_id ?? "Not available"}</li>
+          <li>Sheet ID: {deploymentStatus.assets.spreadsheet_id ?? "Not available"}</li>
+          <li>Script ID: {deploymentStatus.assets.script_id ?? "Not available"}</li>
+        </ul>
+      ) : null}
+
+      {deploymentMessage ? <p className="text-sm text-muted">{deploymentMessage}</p> : null}
+
+      <div className="flex flex-wrap gap-2">
+        <PrimaryAction
+          disabled={deployBlocked}
+          busy={deploymentActionBusy}
+          className="w-full sm:w-auto"
+          onClick={() => void startDeployment()}
+        >
+          {deployActionLabel}
+        </PrimaryAction>
+        {deploymentStatus?.status === "failed" ? (
+          <button
+            type="button"
+            className={chipButtonClassName}
+            disabled={deploymentActionBusy}
+            onClick={() => void retryFailedDeployment()}
+          >
+            Retry failed step
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+
   const leftRail = (
     <Tabs.Root defaultValue="conversation" className="space-y-3" aria-label="Interaction modes">
       <Tabs.List aria-label="Interaction rail tabs" className="grid grid-cols-3 rounded-control border border-line bg-surface p-1">
@@ -447,6 +804,10 @@ export default function WorkspacePage() {
         </Panel>
       </div>
 
+      <Panel title="Deployment" subtitle="Auth -> Form -> Sheet -> Script -> Trigger" variant="tinted">
+        {deployPanelContent}
+      </Panel>
+
       {errorMessage ? (
         <Panel title="Intent Error" variant="default" className="border-danger">
           <p className="text-sm text-danger">{errorMessage}</p>
@@ -457,10 +818,7 @@ export default function WorkspacePage() {
 
   const mobileDeploy = (
     <Panel title="Deploy" subtitle="Auth -> Form -> Sheet -> Script -> Trigger" variant="tinted">
-      <p className="text-sm text-ink">Current step: {deploymentStatus.progress?.current_step}</p>
-      <p className="mt-2 text-meta text-muted">
-        {deployBlocked ? deployReadinessReasons[0] ?? "Resolve blockers before deployment starts." : "Ready for deployment."}
-      </p>
+      {deployPanelContent}
     </Panel>
   );
 
@@ -477,8 +835,13 @@ export default function WorkspacePage() {
         }}
       />
       <div className="fixed inset-x-0 bottom-0 border-t border-line bg-surface p-3 lg:hidden">
-        <PrimaryAction disabled={deployBlocked} className="w-full">
-          {deployBlocked ? "Resolve blockers to deploy" : "Deploy to Google Workspace"}
+        <PrimaryAction
+          disabled={deployBlocked}
+          busy={deploymentActionBusy}
+          className="w-full"
+          onClick={() => void startDeployment()}
+        >
+          {deployActionLabel}
         </PrimaryAction>
       </div>
     </>

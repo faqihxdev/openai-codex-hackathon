@@ -6,6 +6,7 @@ import {
   CanvasStatePatchSchema,
   DeploymentCreateAcceptedSchema,
   DeploymentCreateRequestSchema,
+  DeploymentRetryAcceptedSchema,
   DeploymentStatusSchema,
   HealthResponseSchema,
   IntentEventSchema
@@ -355,6 +356,15 @@ describe("shared contract schemas", () => {
     const parsed = DeploymentCreateAcceptedSchema.safeParse({
       deployment_id: "dep-123",
       status: "queued"
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  test("DeploymentRetryAcceptedSchema accepts running payload", () => {
+    const parsed = DeploymentRetryAcceptedSchema.safeParse({
+      deployment_id: "dep-123",
+      status: "running"
     });
 
     expect(parsed.success).toBe(true);

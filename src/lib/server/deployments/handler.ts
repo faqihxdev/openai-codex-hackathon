@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
 
+import { DeploymentStatusSchema, type DeploymentStatus } from "@/lib/contracts";
 import { createApiErrorResponse, type ApiErrorResponseBody } from "@/lib/errors";
 
 import { toCanonicalJson } from "./hash";
 import {
   type DeploymentCreateAccepted,
   type DeploymentCreateRequest,
+  type DeploymentRetryAccepted,
   DeploymentCreateAcceptedSchema,
-  DeploymentCreateRequestSchema
+  DeploymentCreateRequestSchema,
+  DeploymentRetryAcceptedSchema
 } from "./schemas";
 import {
   createInMemoryDeploymentsStore,
@@ -40,8 +43,39 @@ export type DeploymentsHandlerResult =
   | DeploymentsHandlerSuccessResult
   | DeploymentsHandlerErrorResult;
 
+export interface DeploymentStatusHandlerInput {
+  deployment_id: string;
+}
+
+export type DeploymentStatusHandlerSuccessResult = {
+  status: 200;
+  body: DeploymentStatus;
+};
+
+export type DeploymentStatusHandlerResult =
+  | DeploymentStatusHandlerSuccessResult
+  | DeploymentsHandlerErrorResult;
+
+export interface DeploymentRetryHandlerInput {
+  deployment_id: string;
+}
+
+export type DeploymentRetryHandlerSuccessResult = {
+  status: 202;
+  body: DeploymentRetryAccepted;
+};
+
+export type DeploymentRetryHandlerResult =
+  | DeploymentRetryHandlerSuccessResult
+  | DeploymentsHandlerErrorResult;
+
 function buildError(
-  code: "INVALID_SCHEMA" | "DEPLOY_NOT_READY" | "CONFLICT" | "INTERNAL_ERROR",
+  code:
+    | "INVALID_SCHEMA"
+    | "DEPLOY_NOT_READY"
+    | "CONFLICT"
+    | "NOT_FOUND"
+    | "INTERNAL_ERROR",
   request_id: string,
   details: Record<string, unknown>
 ): DeploymentsHandlerErrorResult {
@@ -122,9 +156,103 @@ export function createDeploymentsHandler(dependencies: DeploymentsHandlerDepende
   };
 }
 
+export function createDeploymentStatusHandler(
+  dependencies: DeploymentsHandlerDependencies
+) {
+  const requestIdFactory = dependencies.requestIdFactory ?? randomUUID;
+
+  return function handleDeploymentStatus(
+    input: DeploymentStatusHandlerInput
+  ): DeploymentStatusHandlerResult {
+    const request_id = requestIdFactory();
+
+    if (!input.deployment_id) {
+      return buildError("INVALID_SCHEMA", request_id, {
+        deployment_id: input.deployment_id,
+        reason: "deployment_id_required"
+      });
+    }
+
+    try {
+      const deployment = dependencies.store.advanceDeployment(input.deployment_id);
+      if (!deployment) {
+        return buildError("NOT_FOUND", request_id, {
+          deployment_id: input.deployment_id
+        });
+      }
+
+      return {
+        status: 200,
+        body: DeploymentStatusSchema.parse(deployment)
+      };
+    } catch (error) {
+      return buildError("INTERNAL_ERROR", request_id, {
+        deployment_id: input.deployment_id,
+        reason: "unexpected_error",
+        error_message: error instanceof Error ? error.message : "unknown_error"
+      });
+    }
+  };
+}
+
+export function createDeploymentRetryHandler(
+  dependencies: DeploymentsHandlerDependencies
+) {
+  const requestIdFactory = dependencies.requestIdFactory ?? randomUUID;
+
+  return function handleDeploymentRetry(
+    input: DeploymentRetryHandlerInput
+  ): DeploymentRetryHandlerResult {
+    const request_id = requestIdFactory();
+
+    if (!input.deployment_id) {
+      return buildError("INVALID_SCHEMA", request_id, {
+        deployment_id: input.deployment_id,
+        reason: "deployment_id_required"
+      });
+    }
+
+    try {
+      const result = dependencies.store.retryDeployment(input.deployment_id);
+
+      if (result.kind === "not_found") {
+        return buildError("NOT_FOUND", request_id, {
+          deployment_id: input.deployment_id
+        });
+      }
+
+      if (result.kind === "conflict") {
+        return buildError("CONFLICT", request_id, {
+          deployment_id: input.deployment_id,
+          reason: result.reason
+        });
+      }
+
+      return {
+        status: 202,
+        body: DeploymentRetryAcceptedSchema.parse({
+          deployment_id: result.deployment.deployment_id,
+          status: result.deployment.status
+        })
+      };
+    } catch (error) {
+      return buildError("INTERNAL_ERROR", request_id, {
+        deployment_id: input.deployment_id,
+        reason: "unexpected_error",
+        error_message: error instanceof Error ? error.message : "unknown_error"
+      });
+    }
+  };
+}
+
 const defaultDeploymentsStore = createInMemoryDeploymentsStore();
 
 export const handleDeployments = createDeploymentsHandler({
   store: defaultDeploymentsStore
 });
-
+export const handleDeploymentStatus = createDeploymentStatusHandler({
+  store: defaultDeploymentsStore
+});
+export const handleDeploymentRetry = createDeploymentRetryHandler({
+  store: defaultDeploymentsStore
+});
