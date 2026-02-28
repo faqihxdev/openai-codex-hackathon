@@ -27,7 +27,14 @@ export const DeploymentCreateAcceptedSchema = z
   })
   .strict();
 
+export const DeploymentRetryAcceptedSchema = z
+  .object({
+    deployment_id: z.string().min(1),
+    status: z.enum(["queued", "running"])
+  })
+  .strict();
+
 export type DeploymentAssistantSnapshot = z.infer<typeof DeploymentAssistantSnapshotSchema>;
 export type DeploymentCreateRequest = z.infer<typeof DeploymentCreateRequestSchema>;
 export type DeploymentCreateAccepted = z.infer<typeof DeploymentCreateAcceptedSchema>;
-
+export type DeploymentRetryAccepted = z.infer<typeof DeploymentRetryAcceptedSchema>;

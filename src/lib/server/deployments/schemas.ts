@@ -2,15 +2,18 @@ import {
   type DeploymentCreateAccepted,
   DeploymentCreateAcceptedSchema,
   type DeploymentCreateRequest,
-  DeploymentCreateRequestSchema
+  DeploymentCreateRequestSchema,
+  type DeploymentRetryAccepted,
+  DeploymentRetryAcceptedSchema
 } from "@/lib/contracts";
 
 export {
   DeploymentCreateAcceptedSchema,
-  DeploymentCreateRequestSchema
+  DeploymentCreateRequestSchema,
+  DeploymentRetryAcceptedSchema
 };
 export type {
   DeploymentCreateAccepted,
-  DeploymentCreateRequest
+  DeploymentCreateRequest,
+  DeploymentRetryAccepted
 };
-
