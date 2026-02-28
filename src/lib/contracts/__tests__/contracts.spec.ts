@@ -5,6 +5,7 @@ import {
   CanvasStateSchema,
   CanvasStatePatchSchema,
   DeploymentStatusSchema,
+  HealthResponseSchema,
   IntentEventSchema
 } from "@/lib/contracts";
 import * as clientContracts from "@/lib/client/contracts";
@@ -210,6 +211,58 @@ describe("shared contract schemas", () => {
         script_id: null
       },
       error: null
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("HealthResponseSchema accepts healthy payload", () => {
+    const parsed = HealthResponseSchema.parse({
+      service: "openai-codex-hackathon",
+      status: "healthy",
+      checked_at_iso: "2026-02-28T12:00:00.000Z",
+      summary: {
+        total_dependencies: 2,
+        ready_dependencies: 2,
+        degraded_dependencies: 0
+      },
+      dependencies: [
+        {
+          name: "openai",
+          status: "ready",
+          required_env: ["OPENAI_API_KEY"],
+          missing_env: []
+        },
+        {
+          name: "database",
+          status: "ready",
+          required_env: ["DATABASE_URL"],
+          missing_env: []
+        }
+      ]
+    });
+
+    expect(parsed.status).toBe("healthy");
+  });
+
+  test("HealthResponseSchema rejects non-ISO timestamps", () => {
+    const parsed = HealthResponseSchema.safeParse({
+      service: "openai-codex-hackathon",
+      status: "degraded",
+      checked_at_iso: "2026/02/28 12:00:00",
+      summary: {
+        total_dependencies: 1,
+        ready_dependencies: 0,
+        degraded_dependencies: 1
+      },
+      dependencies: [
+        {
+          name: "openai",
+          status: "degraded",
+          required_env: ["OPENAI_API_KEY"],
+          missing_env: ["OPENAI_API_KEY"]
+        }
+      ]
     });
 
     expect(parsed.success).toBe(false);
