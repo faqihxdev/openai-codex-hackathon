@@ -5,7 +5,11 @@ import {
   normalizeAddApprovalStepIntent,
   normalizeAnswerApproverIntent,
   normalizeCanvasAddStepIntent,
+  normalizeCanvasRemoveStepIntent,
+  normalizeCanvasRenameStepIntent,
   normalizeChatIntent,
+  normalizeMarkBusinessJustificationRequiredIntent,
+  normalizeSetApprovalThresholdIntent,
   normalizeTemplateIntent
 } from "@/lib/intent/normalizers";
 
@@ -37,6 +41,26 @@ describe("intent normalization", () => {
     expect(parsed.payload.answer).toBe("Finance Lead");
   });
 
+  it("normalizes card field requirements into a valid intent_event", () => {
+    const intentEvent = normalizeMarkBusinessJustificationRequiredIntent();
+    const parsed = IntentEventSchema.parse(intentEvent);
+
+    expect(parsed.source).toBe("card");
+    expect(parsed.intent_type).toBe("update_field");
+    expect(parsed.payload.field_label).toBe("Business justification");
+    expect(parsed.payload.required).toBe(true);
+  });
+
+  it("normalizes card threshold controls into a valid intent_event", () => {
+    const setThreshold = IntentEventSchema.parse(normalizeSetApprovalThresholdIntent(8000));
+    const clearThreshold = IntentEventSchema.parse(normalizeSetApprovalThresholdIntent(null));
+
+    expect(setThreshold.source).toBe("card");
+    expect(setThreshold.intent_type).toBe("set_constraint");
+    expect(setThreshold.payload.threshold).toBe(8000);
+    expect(clearThreshold.payload.threshold).toBeNull();
+  });
+
   it("normalizes template selection into a valid intent_event", () => {
     const intentEvent = normalizeTemplateIntent("expense-approval");
     const parsed = IntentEventSchema.parse(intentEvent);
@@ -53,5 +77,19 @@ describe("intent normalization", () => {
     expect(parsed.source).toBe("canvas");
     expect(parsed.intent_type).toBe("add_step");
     expect(parsed.payload.step).toBeTypeOf("object");
+  });
+
+  it("normalizes canvas rename/remove edits into valid intent_event payloads", () => {
+    const renameEvent = IntentEventSchema.parse(normalizeCanvasRenameStepIntent("approval", "Legal Review"));
+    const removeEvent = IntentEventSchema.parse(normalizeCanvasRemoveStepIntent("approval"));
+
+    expect(renameEvent.source).toBe("canvas");
+    expect(renameEvent.intent_type).toBe("update_field");
+    expect(renameEvent.payload.step_id).toBe("approval");
+    expect(renameEvent.payload.label).toBe("Legal Review");
+
+    expect(removeEvent.source).toBe("canvas");
+    expect(removeEvent.intent_type).toBe("remove_step");
+    expect(removeEvent.payload.step_id).toBe("approval");
   });
 });
