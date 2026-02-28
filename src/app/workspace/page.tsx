@@ -3,6 +3,7 @@
 import * as Tabs from "@radix-ui/react-tabs";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { FlowCanvas } from "@/app/workspace/flow-canvas";
 import type { AssistantResponse } from "@/lib/contracts/assistant-response";
 import { AssistantResponseSchema } from "@/lib/contracts/assistant-response";
 import type { CanvasState } from "@/lib/contracts/canvas-state";
@@ -13,8 +14,8 @@ import {
   normalizeAddApprovalStepIntent,
   normalizeAnswerApproverIntent,
   normalizeCanvasAddStepIntent,
-  normalizeCanvasRemoveStepIntent,
   normalizeCanvasRenameStepIntent,
+  normalizeCanvasRemoveStepIntent,
   normalizeChatIntent,
   normalizeMarkBusinessJustificationRequiredIntent,
   normalizeSetApprovalThresholdIntent,
@@ -22,7 +23,7 @@ import {
 } from "@/lib/intent/normalizers";
 import { cloneCanvasState, getDefaultCanvasState, WORKSPACE_TEMPLATES } from "@/lib/workspace/templates";
 
-import { NodeCard, Panel, PrimaryAction, StatusChip } from "@/components/primitives";
+import { Panel, PrimaryAction, StatusChip } from "@/components/primitives";
 import { AppShell } from "@/components/shell";
 import { cn } from "@/lib/utils/cn";
 
@@ -98,6 +99,38 @@ export default function WorkspacePage() {
   const approvalThresholdEnabled = hasThreshold(canvasState);
   const businessJustificationRequired = isBusinessJustificationRequired(canvasState);
 
+  function commitCanvasState(nextCanvasState: CanvasState) {
+    setCanvasState(nextCanvasState);
+    canvasStateRef.current = nextCanvasState;
+  }
+
+  function renameCanvasStep(stepId: string, label: string) {
+    const nextLabel = label.trim();
+    if (!nextLabel) {
+      return;
+    }
+
+    const currentCanvasState = canvasStateRef.current;
+    const currentStep = currentCanvasState.flow_steps.find((step) => step.id === stepId);
+    if (!currentStep || currentStep.label === nextLabel) {
+      return;
+    }
+
+    const nextCanvasState: CanvasState = {
+      ...currentCanvasState,
+      flow_steps: currentCanvasState.flow_steps.map((step) =>
+        step.id === stepId ? { ...step, label: nextLabel } : step
+      )
+    };
+
+    commitCanvasState(nextCanvasState);
+    void dispatchIntent(normalizeCanvasRenameStepIntent(stepId, nextLabel));
+  }
+
+  function removeCanvasStep(stepId: string) {
+    void dispatchIntent(normalizeCanvasRemoveStepIntent(stepId));
+  }
+
   async function dispatchIntent(intentEvent: IntentEvent) {
     if (inFlightRef.current) {
       return;
@@ -130,8 +163,7 @@ export default function WorkspacePage() {
 
       const nextAssistant = AssistantResponseSchema.parse(await response.json());
       setAssistantResponse(nextAssistant);
-      setCanvasState(nextAssistant.canvas_state);
-      canvasStateRef.current = nextAssistant.canvas_state;
+      commitCanvasState(nextAssistant.canvas_state);
       unresolvedQuestionsRef.current = nextAssistant.unresolved_questions;
       confidenceRef.current = nextAssistant.confidence;
       setIntentHistory((previous) => [intentEvent, ...previous].slice(0, 6));
@@ -338,26 +370,7 @@ export default function WorkspacePage() {
   const rightStage = (
     <div className="space-y-4">
       <Panel title="Canvas" subtitle="Directly edit the workflow graph" variant="elevated">
-        <div className="grid gap-3">
-          {canvasState.flow_steps.map((step) => (
-            <div key={step.id} className="space-y-2">
-              <NodeCard
-                type={step.type}
-                title={step.label}
-                meta={`Step ID: ${step.id}`}
-                onEdit={() => void dispatchIntent(normalizeCanvasRenameStepIntent(step.id, `${step.label} (edited)`))}
-              />
-              <button
-                type="button"
-                className={chipButtonClassName}
-                disabled={busy || canvasState.flow_steps.length <= 1}
-                onClick={() => void dispatchIntent(normalizeCanvasRemoveStepIntent(step.id))}
-              >
-                Remove step
-              </button>
-            </div>
-          ))}
-        </div>
+        <FlowCanvas steps={canvasState.flow_steps} busy={busy} onRenameStep={renameCanvasStep} onRemoveStep={removeCanvasStep} />
 
         <div className="mt-4">
           <PrimaryAction
