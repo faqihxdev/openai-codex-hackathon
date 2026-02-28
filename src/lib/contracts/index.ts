@@ -33,3 +33,12 @@ export type {
   DeploymentProgress,
   DeploymentStatus
 } from "./deployment-status";
+
+export {
+  StarterTemplateSchema,
+  TemplatesResponseSchema
+} from "./template";
+export type {
+  StarterTemplate,
+  TemplatesResponse
+} from "./template";
