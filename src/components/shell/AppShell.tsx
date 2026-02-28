@@ -46,7 +46,13 @@ export function AppShell({
           </section>
         </div>
 
-        <Tabs.Root defaultValue={defaultMobileTab} className="space-y-4 lg:hidden" aria-label="Mobile workspace tabs">
+        <Tabs.Root
+          defaultValue={defaultMobileTab}
+          className="space-y-4 lg:hidden"
+          activationMode="automatic"
+          orientation="horizontal"
+          aria-label="Mobile workspace tabs"
+        >
           <Tabs.List
             aria-label="Workspace view switch"
             className="grid grid-cols-3 rounded-control border border-line bg-surface p-1"

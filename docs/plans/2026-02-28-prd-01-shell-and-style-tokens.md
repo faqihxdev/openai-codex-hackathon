@@ -9,6 +9,7 @@ Implemented a Next.js App Router frontend scaffold directly in this repository a
 - Editorial Control Room tokenized design system.
 - Typography wired with `next/font/google` (`Syne`, `Archivo`, `IBM Plex Mono`).
 - Base reusable primitives: `AppShell`, `Panel`, `NodeCard`, `StatusChip`, `PrimaryAction`.
+- Branch hygiene cleanup: removed tracked build artifacts under `packages/contracts/dist/**`.
 
 ## Files Added/Updated
 
@@ -32,18 +33,20 @@ Implemented a Next.js App Router frontend scaffold directly in this repository a
 - Typography system wired globally through layout and token classes: yes.
 - Base primitives implemented and reused by shell/workspace: yes.
 - Desktop and mobile shell layouts implemented and stable by structure: yes.
+- Keyboard/focus flow verified for mobile tab switching (`Discuss`, `Design`, `Deploy`): yes.
 
 ## Screenshot Checklist
 
-- [ ] Desktop shell showing left rail and right stage.
-- [ ] Mobile view with `Discuss | Design | Deploy` segmented controls.
-- [ ] Node cards showing input/process/output visual differences.
-- [ ] Top bar chips and deploy action using tokenized styling.
+- [ ] Desktop shell showing left rail and right stage. (manual capture pending)
+- [ ] Mobile view with `Discuss | Design | Deploy` segmented controls. (manual capture pending)
+- [ ] Node cards showing input/process/output visual differences. (manual capture pending)
+- [ ] Top bar chips and deploy action using tokenized styling. (manual capture pending)
 
 ## Verification Commands
 
 ```bash
 pnpm contracts:test
+pnpm contracts:typecheck
 pnpm test:ui
 pnpm build
 ```
@@ -51,5 +54,6 @@ pnpm build
 ## Verification Results
 
 - `pnpm contracts:test`: passed (`3` files, `15` tests).
-- `pnpm test:ui`: passed (`7` files, `10` tests).
+- `pnpm contracts:typecheck`: passed with no TypeScript errors.
+- `pnpm test:ui`: passed (`7` files, `13` tests).
 - `pnpm build`: passed, static routes generated for `/` and `/workspace`.
