@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 
+import type { DeploymentStatus } from "@/lib/contracts";
 import { createApiErrorResponse, type ApiErrorResponseBody } from "@/lib/errors";
 
+import {
+  createGoogleWorkspaceDeployer,
+  createMockGoogleWorkspaceDeployer,
+  type GoogleWorkspaceDeployer
+} from "./google-workspace";
 import { toCanonicalJson } from "./hash";
 import {
   type DeploymentCreateAccepted,
@@ -19,6 +25,7 @@ type RequestIdFactory = () => string;
 
 export interface DeploymentsHandlerDependencies {
   store: DeploymentsStore;
+  deployer: GoogleWorkspaceDeployer;
   requestIdFactory?: RequestIdFactory;
 }
 
@@ -65,12 +72,76 @@ function buildRequestHash(request: DeploymentCreateRequest): string {
   });
 }
 
+async function runDeploymentWorkflow(input: {
+  store: DeploymentsStore;
+  deployer: GoogleWorkspaceDeployer;
+  deployment: DeploymentStatus;
+  canvas_state: DeploymentCreateRequest["canvas_state"];
+}) {
+  const runningStatus: DeploymentStatus = {
+    ...input.deployment,
+    status: "running",
+    progress: {
+      current_step: "create_form",
+      completed_steps: [],
+      failed_step: null
+    },
+    error: null
+  };
+  input.store.saveDeployment(runningStatus);
+
+  try {
+    const assets = await input.deployer.deploy({
+      deployment_id: input.deployment.deployment_id,
+      canvas_state: input.canvas_state
+    });
+
+    input.store.saveDeployment({
+      ...runningStatus,
+      status: "succeeded",
+      assets,
+      progress: {
+        current_step: "completed",
+        completed_steps: [
+          "create_form",
+          "create_sheet",
+          "create_script",
+          "create_trigger"
+        ],
+        failed_step: null
+      }
+    });
+  } catch (error) {
+    input.store.saveDeployment({
+      ...runningStatus,
+      status: "failed",
+      error: {
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Google Workspace deployment workflow failed.",
+        details: {
+          reason: "google_deploy_failed",
+          error_message: error instanceof Error ? error.message : "unknown_error"
+        }
+      },
+      progress: {
+        current_step: "create_trigger",
+        completed_steps: [
+          "create_form",
+          "create_sheet",
+          "create_script"
+        ],
+        failed_step: "create_trigger"
+      }
+    });
+  }
+}
+
 export function createDeploymentsHandler(dependencies: DeploymentsHandlerDependencies) {
   const requestIdFactory = dependencies.requestIdFactory ?? randomUUID;
 
-  return function handleDeployments(
+  return async function handleDeployments(
     input: DeploymentsHandlerInput
-  ): DeploymentsHandlerResult {
+  ): Promise<DeploymentsHandlerResult> {
     const request_id = requestIdFactory();
 
     const parsedRequest = DeploymentCreateRequestSchema.safeParse(input.rawBody);
@@ -106,11 +177,20 @@ export function createDeploymentsHandler(dependencies: DeploymentsHandlerDepende
         });
       }
 
+      if (result.kind === "created") {
+        void runDeploymentWorkflow({
+          store: dependencies.store,
+          deployer: dependencies.deployer,
+          deployment: result.deployment,
+          canvas_state: request.canvas_state
+        });
+      }
+
       return {
         status: 202,
         body: DeploymentCreateAcceptedSchema.parse({
           deployment_id: result.deployment.deployment_id,
-          status: result.deployment.status
+          status: "queued"
         })
       };
     } catch (error) {
@@ -123,8 +203,14 @@ export function createDeploymentsHandler(dependencies: DeploymentsHandlerDepende
 }
 
 const defaultDeploymentsStore = createInMemoryDeploymentsStore();
+const defaultGoogleAccessToken = process.env.GOOGLE_WORKSPACE_ACCESS_TOKEN?.trim();
+const defaultDeployer = defaultGoogleAccessToken
+  ? createGoogleWorkspaceDeployer({
+      accessToken: defaultGoogleAccessToken
+    })
+  : createMockGoogleWorkspaceDeployer();
 
 export const handleDeployments = createDeploymentsHandler({
-  store: defaultDeploymentsStore
+  store: defaultDeploymentsStore,
+  deployer: defaultDeployer
 });
-

@@ -6,7 +6,7 @@ import {
 
 export async function POST(request: Request) {
   try {
-    const result = handleDeployments({
+    const result = await handleDeployments({
       rawBody: await request.json()
     });
 
@@ -25,4 +25,3 @@ export async function POST(request: Request) {
     );
   }
 }
-
