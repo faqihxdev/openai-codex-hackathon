@@ -111,7 +111,7 @@ export default function WorkspacePage() {
   const businessJustificationRequired = isBusinessJustificationRequired(canvasState);
   const deployReadinessReasons = assistantResponse.deploy_readiness_reasons;
   const additionalReadinessReasons = deployReadinessReasons.filter(
-    (reason) => !reason.startsWith("Resolve unresolved questions")
+    (reason) => !/unresolved questions/i.test(reason)
   );
 
   function commitCanvasState(nextCanvasState: CanvasState) {

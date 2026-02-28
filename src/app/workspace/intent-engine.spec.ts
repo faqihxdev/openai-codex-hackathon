@@ -39,7 +39,7 @@ describe("intent processing engine", () => {
 
     expect(response.deploy_ready).toBe(false);
     expect(response.deploy_readiness_reasons).toEqual([
-      "Resolve unresolved questions before deploy (1 remaining)."
+      "Critical unresolved questions remain."
     ]);
   });
 
@@ -72,7 +72,7 @@ describe("intent processing engine", () => {
     expect(response.unresolved_questions).toEqual([]);
     expect(response.deploy_ready).toBe(false);
     expect(response.deploy_readiness_reasons).toEqual([
-      "Sheet headers must follow mapping rule: Timestamp, form field labels, Edit Link."
+      "Sheet headers do not match form field mapping requirements."
     ]);
   });
 
@@ -86,7 +86,7 @@ describe("intent processing engine", () => {
     expect(response.chat_reply).toContain("template remix");
     expect(response.deploy_ready).toBe(false);
     expect(response.deploy_readiness_reasons).toEqual([
-      "Confidence 65% is below 75% readiness threshold."
+      "Confidence below deployment threshold (0.75)."
     ]);
     expect(response).toHaveProperty("deploy_ready");
     expect(response).toHaveProperty("deploy_readiness_reasons");
