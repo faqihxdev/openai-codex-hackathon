@@ -233,6 +233,8 @@ describe("deployments create handler", () => {
     if (resumed.status === 202) {
       expect(resumed.body.status).toBe("queued");
     }
+  });
+
   test("marks deployment succeeded and persists created asset IDs", async () => {
     const store = createInMemoryDeploymentsStore();
     const handler = createDeploymentsHandler({
@@ -243,7 +245,8 @@ describe("deployments create handler", () => {
     });
 
     const result = handler({
-      rawBody: buildReadyPayload()
+      rawBody: buildReadyPayload(),
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(202);
@@ -278,7 +281,8 @@ describe("deployments create handler", () => {
     });
 
     const result = handler({
-      rawBody: buildReadyPayload()
+      rawBody: buildReadyPayload(),
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(202);
@@ -315,7 +319,8 @@ describe("deployments create handler", () => {
     });
 
     const result = handler({
-      rawBody: buildReadyPayload()
+      rawBody: buildReadyPayload(),
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(202);
