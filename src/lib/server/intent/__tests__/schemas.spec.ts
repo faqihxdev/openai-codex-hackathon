@@ -160,7 +160,9 @@ describe("intent endpoint schemas", () => {
         canvas_state_patch: [],
         confidence: 0.9,
         unresolved_questions: [],
-        next_actions: ["Add approver field"]
+        next_actions: ["Add approver field"],
+        deploy_ready: true,
+        deploy_readiness_reasons: []
       }
     });
 
@@ -176,7 +178,9 @@ describe("intent endpoint schemas", () => {
         canvas_state_patch: [],
         confidence: 0.9,
         unresolved_questions: [],
-        next_actions: ["Add approver field"]
+        next_actions: ["Add approver field"],
+        deploy_ready: true,
+        deploy_readiness_reasons: []
       },
       extra: "drift"
     });
@@ -213,7 +217,9 @@ describe("intent endpoint schemas", () => {
         canvas_state_patch: [],
         confidence: 0.9,
         unresolved_questions: [],
-        next_actions: ["Add approver field"]
+        next_actions: ["Add approver field"],
+        deploy_ready: true,
+        deploy_readiness_reasons: []
       }
     });
 

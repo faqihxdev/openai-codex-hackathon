@@ -82,7 +82,9 @@ function buildValidAssistantResponse(): AssistantResponse {
     canvas_state_patch: [],
     confidence: 0.9,
     unresolved_questions: [],
-    next_actions: ["Add approver field"]
+    next_actions: ["Add approver field"],
+    deploy_ready: true,
+    deploy_readiness_reasons: []
   };
 }
 
@@ -214,6 +216,11 @@ describe("intent handler", () => {
     expect(result.body.response.next_actions).toEqual([
       "Answer clarifying question",
       "Retry intent update"
+    ]);
+    expect(result.body.response.deploy_ready).toBe(false);
+    expect(result.body.response.deploy_readiness_reasons).toEqual([
+      "Critical unresolved questions remain.",
+      "Fallback response requires additional clarification before deployment."
     ]);
   });
 

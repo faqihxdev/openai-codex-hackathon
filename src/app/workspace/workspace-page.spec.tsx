@@ -32,7 +32,9 @@ describe("workspace page multimodal interaction", () => {
           canvas_state_patch: [],
           confidence: 0.9,
           unresolved_questions: [],
-          next_actions: ["Deploy"]
+          next_actions: ["Deploy"],
+          deploy_ready: true,
+          deploy_readiness_reasons: []
         }),
         {
           status: 200,
@@ -151,7 +153,9 @@ describe("workspace page multimodal interaction", () => {
           canvas_state_patch: [],
           confidence: 0.9,
           unresolved_questions: [],
-          next_actions: ["Deploy"]
+          next_actions: ["Deploy"],
+          deploy_ready: true,
+          deploy_readiness_reasons: []
         }),
         {
           status: 200,
