@@ -5,6 +5,10 @@ import {
   createDeploymentStatusHandler,
   createDeploymentsHandler
 } from "@/lib/server/deployments/handler";
+import {
+  REQUIRED_DEPLOYMENT_OAUTH_SCOPES,
+  type DeploymentAuthContext
+} from "@/lib/server/deployments/auth";
 import type { DeploymentsStore } from "@/lib/server/deployments/store";
 import {
   createInMemoryDeploymentsStore
@@ -41,6 +45,14 @@ function buildReadyPayload() {
   };
 }
 
+function buildAuthorizedAuthContext(): DeploymentAuthContext {
+  return {
+    user_id: "user-123",
+    oauth_token_status: "valid",
+    oauth_scopes: [...REQUIRED_DEPLOYMENT_OAUTH_SCOPES]
+  };
+}
+
 describe("deployments create handler", () => {
   test("returns INVALID_SCHEMA for invalid payload", () => {
     const handler = createDeploymentsHandler({
@@ -52,7 +64,8 @@ describe("deployments create handler", () => {
       rawBody: {
         session_id: "",
         idempotency_key: ""
-      }
+      },
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(400);
@@ -69,7 +82,8 @@ describe("deployments create handler", () => {
     payload.assistant_snapshot.deploy_readiness_reasons = ["Critical unresolved questions remain."];
 
     const result = handler({
-      rawBody: payload
+      rawBody: payload,
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(409);
@@ -86,7 +100,8 @@ describe("deployments create handler", () => {
     });
 
     const result = handler({
-      rawBody: buildReadyPayload()
+      rawBody: buildReadyPayload(),
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(202);
@@ -104,10 +119,12 @@ describe("deployments create handler", () => {
     const payload = buildReadyPayload();
 
     const first = handler({
-      rawBody: payload
+      rawBody: payload,
+      auth: buildAuthorizedAuthContext()
     });
     const replay = handler({
-      rawBody: payload
+      rawBody: payload,
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(first.status).toBe(202);
@@ -127,10 +144,12 @@ describe("deployments create handler", () => {
     secondPayload.assistant_snapshot.confidence = 0.77;
 
     handler({
-      rawBody: firstPayload
+      rawBody: firstPayload,
+      auth: buildAuthorizedAuthContext()
     });
     const conflict = handler({
-      rawBody: secondPayload
+      rawBody: secondPayload,
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(conflict.status).toBe(409);
@@ -138,6 +157,62 @@ describe("deployments create handler", () => {
     expect(conflict.body.error.details.reason).toBe(
       "idempotency_key_reused_with_different_payload"
     );
+  });
+
+  test("returns recoverable UNAUTHORIZED when required scopes are missing", () => {
+    const handler = createDeploymentsHandler({
+      store: createInMemoryDeploymentsStore(),
+      requestIdFactory: () => "req-auth-scopes"
+    });
+    const payload = buildReadyPayload();
+
+    const result = handler({
+      rawBody: payload,
+      auth: {
+        user_id: "user-123",
+        oauth_token_status: "valid",
+        oauth_scopes: [REQUIRED_DEPLOYMENT_OAUTH_SCOPES[0]]
+      }
+    });
+
+    expect(result.status).toBe(401);
+    expect(result.body.error.code).toBe("UNAUTHORIZED");
+    expect(result.body.error.retryable).toBe(true);
+    expect(result.body.error.details.reason).toBe("missing_required_scopes");
+    expect(result.body.error.details.reauth_required).toBe(true);
+    expect(result.body.error.details.resume_context).toEqual({
+      session_id: payload.session_id,
+      idempotency_key: payload.idempotency_key
+    });
+  });
+
+  test("resumes deploy create successfully after re-auth with the same draft payload", () => {
+    const handler = createDeploymentsHandler({
+      store: createInMemoryDeploymentsStore(),
+      requestIdFactory: () => "req-auth-resume"
+    });
+    const payload = buildReadyPayload();
+
+    const blocked = handler({
+      rawBody: payload,
+      auth: {
+        user_id: "user-123",
+        oauth_token_status: "expired",
+        oauth_scopes: [...REQUIRED_DEPLOYMENT_OAUTH_SCOPES]
+      }
+    });
+    expect(blocked.status).toBe(401);
+    expect(blocked.body.error.code).toBe("UNAUTHORIZED");
+    expect(blocked.body.error.details.reason).toBe("expired_oauth_token");
+
+    const resumed = handler({
+      rawBody: payload,
+      auth: buildAuthorizedAuthContext()
+    });
+    expect(resumed.status).toBe(202);
+    if (resumed.status === 202) {
+      expect(resumed.body.status).toBe("queued");
+    }
   });
 });
 
@@ -149,7 +224,8 @@ describe("deployments status and retry handlers", () => {
     });
 
     const result = statusHandler({
-      deployment_id: "missing-id"
+      deployment_id: "missing-id",
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(404);
@@ -168,14 +244,16 @@ describe("deployments status and retry handlers", () => {
     });
 
     const created = createHandler({
-      rawBody: buildReadyPayload()
+      rawBody: buildReadyPayload(),
+      auth: buildAuthorizedAuthContext()
     });
     if (created.status !== 202) {
       throw new Error("Expected deployment creation to succeed");
     }
 
     const firstPoll = statusHandler({
-      deployment_id: created.body.deployment_id
+      deployment_id: created.body.deployment_id,
+      auth: buildAuthorizedAuthContext()
     });
     expect(firstPoll.status).toBe(200);
     if (firstPoll.status === 200) {
@@ -186,7 +264,8 @@ describe("deployments status and retry handlers", () => {
     let latest = firstPoll;
     for (let index = 0; index < 5; index += 1) {
       latest = statusHandler({
-        deployment_id: created.body.deployment_id
+        deployment_id: created.body.deployment_id,
+        auth: buildAuthorizedAuthContext()
       });
     }
 
@@ -215,14 +294,16 @@ describe("deployments status and retry handlers", () => {
     });
 
     const created = createHandler({
-      rawBody: buildReadyPayload()
+      rawBody: buildReadyPayload(),
+      auth: buildAuthorizedAuthContext()
     });
     if (created.status !== 202) {
       throw new Error("Expected deployment creation to succeed");
     }
 
     const retry = retryHandler({
-      deployment_id: created.body.deployment_id
+      deployment_id: created.body.deployment_id,
+      auth: buildAuthorizedAuthContext()
     });
     expect(retry.status).toBe(409);
     expect(retry.body.error.code).toBe("CONFLICT");
@@ -247,7 +328,8 @@ describe("deployments status and retry handlers", () => {
     const payload = buildReadyPayload();
     payload.idempotency_key = "deploy-sess-123-fail-once-v1";
     const created = createHandler({
-      rawBody: payload
+      rawBody: payload,
+      auth: buildAuthorizedAuthContext()
     });
     if (created.status !== 202) {
       throw new Error("Expected deployment creation to succeed");
@@ -255,12 +337,14 @@ describe("deployments status and retry handlers", () => {
 
     for (let index = 0; index < 5; index += 1) {
       statusHandler({
-        deployment_id: created.body.deployment_id
+        deployment_id: created.body.deployment_id,
+        auth: buildAuthorizedAuthContext()
       });
     }
 
     const failed = statusHandler({
-      deployment_id: created.body.deployment_id
+      deployment_id: created.body.deployment_id,
+      auth: buildAuthorizedAuthContext()
     });
     expect(failed.status).toBe(200);
     if (failed.status === 200) {
@@ -269,7 +353,8 @@ describe("deployments status and retry handlers", () => {
     }
 
     const retried = retryHandler({
-      deployment_id: created.body.deployment_id
+      deployment_id: created.body.deployment_id,
+      auth: buildAuthorizedAuthContext()
     });
     expect(retried.status).toBe(202);
     if (retried.status === 202) {
@@ -301,7 +386,8 @@ describe("deployments handlers internal errors", () => {
     });
 
     const result = handler({
-      rawBody: buildReadyPayload()
+      rawBody: buildReadyPayload(),
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(500);
@@ -316,7 +402,8 @@ describe("deployments handlers internal errors", () => {
     });
 
     const result = handler({
-      deployment_id: "dep-1"
+      deployment_id: "dep-1",
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(500);
@@ -330,7 +417,8 @@ describe("deployments handlers internal errors", () => {
     });
 
     const result = handler({
-      deployment_id: "dep-1"
+      deployment_id: "dep-1",
+      auth: buildAuthorizedAuthContext()
     });
 
     expect(result.status).toBe(500);

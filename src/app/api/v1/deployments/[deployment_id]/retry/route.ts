@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
-import { handleDeploymentRetry } from "@/lib/server/deployments";
+import {
+  getDeploymentAuthContextFromHeaders,
+  handleDeploymentRetry
+} from "@/lib/server/deployments";
 
 type RouteContext = {
   params: Promise<{
@@ -9,13 +12,14 @@ type RouteContext = {
 };
 
 export async function POST(
-  _request: Request,
+  request: Request,
   context: RouteContext
 ) {
   const { deployment_id } = await context.params;
 
   const result = handleDeploymentRetry({
-    deployment_id
+    deployment_id,
+    auth: getDeploymentAuthContextFromHeaders(request.headers)
   });
 
   return NextResponse.json(result.body, {

@@ -1,15 +1,25 @@
 import { describe, expect, test } from "vitest";
 
 import { DeploymentCreateAcceptedSchema, DeploymentStatusSchema } from "@/lib/contracts";
+import { REQUIRED_DEPLOYMENT_OAUTH_SCOPES } from "@/lib/server/deployments";
 
 import { POST as createDeployment } from "../route";
 import { GET } from "./route";
+
+function buildAuthHeaders(): Record<string, string> {
+  return {
+    "x-user-id": "user-status-route",
+    "x-oauth-token-status": "valid",
+    "x-oauth-scopes": [...REQUIRED_DEPLOYMENT_OAUTH_SCOPES].join(" ")
+  };
+}
 
 function buildCreateRequest(idempotency_key: string): Request {
   return new Request("http://localhost/api/v1/deployments", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...buildAuthHeaders()
     },
     body: JSON.stringify({
       session_id: "sess-status-route",
@@ -49,7 +59,9 @@ describe("GET /api/v1/deployments/{deployment_id}", () => {
     );
     const created = DeploymentCreateAcceptedSchema.parse(await createResponse.json());
 
-    const response = await GET(new Request("http://localhost"), {
+    const response = await GET(new Request("http://localhost", {
+      headers: buildAuthHeaders()
+    }), {
       params: Promise.resolve({
         deployment_id: created.deployment_id
       })
@@ -62,7 +74,9 @@ describe("GET /api/v1/deployments/{deployment_id}", () => {
   });
 
   test("returns NOT_FOUND for unknown deployment id", async () => {
-    const response = await GET(new Request("http://localhost"), {
+    const response = await GET(new Request("http://localhost", {
+      headers: buildAuthHeaders()
+    }), {
       params: Promise.resolve({
         deployment_id: "dep-missing-status"
       })
