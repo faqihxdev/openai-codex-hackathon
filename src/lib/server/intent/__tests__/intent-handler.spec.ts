@@ -86,6 +86,18 @@ function buildValidAssistantResponse(): AssistantResponse {
   };
 }
 
+function buildMalformedAssistantResponse() {
+  return {
+    chat_reply: "Malformed response",
+    canvas_state: {
+      process_name: "Expense Approval",
+      form_fields: [],
+      sheet_headers: ["Timestamp"],
+      flow_steps: []
+    }
+  };
+}
+
 describe("intent handler", () => {
   test("returns INVALID_SCHEMA for malformed body", async () => {
     const handler = createIntentHandler({
@@ -175,38 +187,122 @@ describe("intent handler", () => {
     expect(result.body.error.details.reason).toBe("unexpected_error");
   });
 
-  test("returns INTERNAL_ERROR with invalid_assistant_response when processIntent returns malformed payload", async () => {
+  test("returns deterministic fallback when processIntent returns malformed payload and no repair dependency is provided", async () => {
+    const request = buildValidIntentRequest();
     const handler = createIntentHandler({
       authorizeSession: vi.fn().mockResolvedValue(true),
-      processIntent: vi.fn().mockResolvedValue({
-        chat_reply: "Malformed response",
-        canvas_state: {
-          process_name: "Expense Approval",
-          form_fields: [],
-          sheet_headers: ["Timestamp"],
-          flow_steps: []
-        }
-      } as unknown as AssistantResponse),
+      processIntent: vi.fn().mockResolvedValue(buildMalformedAssistantResponse()),
       requestIdFactory: () => "req-invalid-assistant-response"
     });
 
     const result = await handler({
-      rawBody: buildValidIntentRequest(),
+      rawBody: request,
       auth: { user_id: "user-123" }
     });
 
-    assertErrorResult(result, 500);
-    expect(result.body.error.code).toBe("INTERNAL_ERROR");
-    expect(result.body.error.request_id).toBe("req-invalid-assistant-response");
-    expect(result.body.error.details.reason).toBe("invalid_assistant_response");
-    expect(result.body.error.details.issues).toBeDefined();
+    assertSuccessResult(result);
+    expect(result.body.session_id).toBe("sess-123");
+    expect(result.body.response.chat_reply).toBe(
+      "I could not safely apply that update yet. Which field should I add, and should it be required?"
+    );
+    expect(result.body.response.canvas_state).toEqual(request.canvas_state);
+    expect(result.body.response.canvas_state_patch).toEqual([]);
+    expect(result.body.response.confidence).toBe(0.2);
+    expect(result.body.response.unresolved_questions).toEqual([
+      "Which field should I add, and should it be required?"
+    ]);
+    expect(result.body.response.next_actions).toEqual([
+      "Answer clarifying question",
+      "Retry intent update"
+    ]);
+  });
+
+  test("returns repaired response when repairIntent fixes malformed processor output", async () => {
+    const request = buildValidIntentRequest();
+    const processIntent = vi.fn().mockResolvedValue(buildMalformedAssistantResponse());
+    const repairIntent = vi.fn().mockResolvedValue(buildValidAssistantResponse());
+    const handler = createIntentHandler({
+      authorizeSession: vi.fn().mockResolvedValue(true),
+      processIntent,
+      repairIntent
+    });
+
+    const result = await handler({
+      rawBody: request,
+      auth: { user_id: "user-123" }
+    });
+
+    assertSuccessResult(result);
+    expect(result.body.session_id).toBe("sess-123");
+    expect(result.body.response.chat_reply).toBe("Added Requester Name.");
+    expect(repairIntent).toHaveBeenCalledTimes(1);
+    expect(repairIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request,
+        access: {
+          user_id: "user-123",
+          session_id: "sess-123"
+        },
+        invalid_response: buildMalformedAssistantResponse(),
+        validation_issues: expect.any(Array)
+      })
+    );
+    expect(processIntent).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns deterministic fallback when repairIntent also returns malformed payload", async () => {
+    const request = buildValidIntentRequest();
+    const processIntent = vi.fn().mockResolvedValue(buildMalformedAssistantResponse());
+    const repairIntent = vi.fn().mockResolvedValue({
+      chat_reply: "still malformed"
+    });
+    const handler = createIntentHandler({
+      authorizeSession: vi.fn().mockResolvedValue(true),
+      processIntent,
+      repairIntent
+    });
+
+    const result = await handler({
+      rawBody: request,
+      auth: { user_id: "user-123" }
+    });
+
+    assertSuccessResult(result);
+    expect(result.body.response.chat_reply).toBe(
+      "I could not safely apply that update yet. Which field should I add, and should it be required?"
+    );
+    expect(repairIntent).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns deterministic fallback when repairIntent throws", async () => {
+    const request = buildValidIntentRequest();
+    const processIntent = vi.fn().mockResolvedValue(buildMalformedAssistantResponse());
+    const repairIntent = vi.fn().mockRejectedValue(new Error("repair call failed"));
+    const handler = createIntentHandler({
+      authorizeSession: vi.fn().mockResolvedValue(true),
+      processIntent,
+      repairIntent
+    });
+
+    const result = await handler({
+      rawBody: request,
+      auth: { user_id: "user-123" }
+    });
+
+    assertSuccessResult(result);
+    expect(result.body.response.chat_reply).toBe(
+      "I could not safely apply that update yet. Which field should I add, and should it be required?"
+    );
+    expect(repairIntent).toHaveBeenCalledTimes(1);
   });
 
   test("returns success envelope for valid authorized request", async () => {
     const processIntent = vi.fn().mockResolvedValue(buildValidAssistantResponse());
+    const repairIntent = vi.fn();
     const handler = createIntentHandler({
       authorizeSession: vi.fn().mockResolvedValue(true),
-      processIntent
+      processIntent,
+      repairIntent
     });
 
     const request = buildValidIntentRequest();
@@ -225,5 +321,6 @@ describe("intent handler", () => {
         session_id: "sess-123"
       }
     });
+    expect(repairIntent).not.toHaveBeenCalled();
   });
 });
