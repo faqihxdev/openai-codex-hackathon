@@ -1,13 +1,25 @@
-import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
+import { defineConfig } from "vitest/config";
+
 export default defineConfig({
+  esbuild: {
+    jsx: "automatic"
+  },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url))
     }
   },
   test: {
-    include: ["src/**/*.spec.ts"]
+    globals: true,
+    include: [
+      "src/components/**/*.spec.ts",
+      "src/components/**/*.spec.tsx",
+      "src/app/**/*.spec.ts",
+      "src/app/**/*.spec.tsx"
+    ],
+    environment: "jsdom",
+    setupFiles: ["src/test/setup.ts"]
   }
 });
