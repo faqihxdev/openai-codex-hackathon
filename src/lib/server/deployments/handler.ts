@@ -305,7 +305,6 @@ export function createDeploymentStatusHandler(
         );
       }
 
-      const deployment = dependencies.store.advanceDeployment(input.deployment_id);
       const existing = dependencies.store.getDeploymentById(input.deployment_id);
       if (!existing) {
         return buildError("NOT_FOUND", request_id, {
