@@ -4,6 +4,7 @@ import type { DeploymentStatus } from "@/lib/contracts";
 import { createApiErrorResponse, type ApiErrorResponseBody } from "@/lib/errors";
 
 import {
+  DeployWorkflowError,
   createGoogleWorkspaceDeployer,
   createMockGoogleWorkspaceDeployer,
   type GoogleWorkspaceDeployer
@@ -112,6 +113,15 @@ async function runDeploymentWorkflow(input: {
       }
     });
   } catch (error) {
+    const failedStep =
+      error instanceof DeployWorkflowError
+        ? error.failed_step
+        : "unknown";
+    const completedSteps =
+      error instanceof DeployWorkflowError
+        ? error.completed_steps
+        : [];
+
     input.store.saveDeployment({
       ...runningStatus,
       status: "failed",
@@ -124,13 +134,9 @@ async function runDeploymentWorkflow(input: {
         }
       },
       progress: {
-        current_step: "create_trigger",
-        completed_steps: [
-          "create_form",
-          "create_sheet",
-          "create_script"
-        ],
-        failed_step: "create_trigger"
+        current_step: failedStep,
+        completed_steps: completedSteps,
+        failed_step: failedStep
       }
     });
   }

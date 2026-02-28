@@ -13,6 +13,33 @@ export interface DeployWorkflowResult {
   script_id: string;
 }
 
+export type DeployWorkflowStep =
+  | "create_form"
+  | "create_form_questions"
+  | "create_sheet"
+  | "set_sheet_headers"
+  | "create_script_project"
+  | "set_script_content"
+  | "create_trigger";
+
+export class DeployWorkflowError extends Error {
+  readonly failed_step: DeployWorkflowStep;
+  readonly completed_steps: DeployWorkflowStep[];
+
+  constructor(input: {
+    failed_step: DeployWorkflowStep;
+    completed_steps: DeployWorkflowStep[];
+    cause: unknown;
+  }) {
+    const causeMessage =
+      input.cause instanceof Error ? input.cause.message : String(input.cause);
+    super(`${input.failed_step} failed: ${causeMessage}`);
+    this.name = "DeployWorkflowError";
+    this.failed_step = input.failed_step;
+    this.completed_steps = [...input.completed_steps];
+  }
+}
+
 export interface GoogleWorkspaceDeployer {
   deploy(input: {
     canvas_state: CanvasState;
@@ -201,90 +228,130 @@ export function createGoogleWorkspaceDeployer(input: {
 
   return {
     async deploy({ canvas_state }) {
-      const formPayload = await callJson(
-        `${FORMS_API_BASE}/forms`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            info: {
-              title: canvas_state.process_name,
-              documentTitle: canvas_state.process_name
-            }
-          })
-        },
-        "create_form"
-      );
-      const formId = String(formPayload.formId ?? "");
-      if (!formId) {
-        throw new Error("create_form failed: missing formId");
+      const completedSteps: DeployWorkflowStep[] = [];
+      async function runStep(
+        step: DeployWorkflowStep,
+        execution: () => Promise<Record<string, unknown>>
+      ): Promise<Record<string, unknown>> {
+        try {
+          const result = await execution();
+          completedSteps.push(step);
+          return result;
+        } catch (error) {
+          throw new DeployWorkflowError({
+            failed_step: step,
+            completed_steps: completedSteps,
+            cause: error
+          });
+        }
       }
 
-      if (canvas_state.form_fields.length > 0) {
-        await callJson(
-          `${FORMS_API_BASE}/forms/${formId}:batchUpdate`,
+      const formPayload = await runStep("create_form", () =>
+        callJson(
+          `${FORMS_API_BASE}/forms`,
           {
             method: "POST",
             body: JSON.stringify({
-              requests: canvas_state.form_fields.map((field, index) => ({
-                createItem: {
-                  item: {
-                    title: field.label,
-                    questionItem: buildFormQuestion(field).questionItem
-                  },
-                  location: {
-                    index
-                  }
-                }
-              }))
+              info: {
+                title: canvas_state.process_name,
+                documentTitle: canvas_state.process_name
+              }
             })
           },
-          "create_form_questions"
+          "create_form"
+        )
+      );
+      const formId = String(formPayload.formId ?? "");
+      if (!formId) {
+        throw new DeployWorkflowError({
+          failed_step: "create_form",
+          completed_steps: completedSteps,
+          cause: new Error("missing formId")
+        });
+      }
+
+      if (canvas_state.form_fields.length > 0) {
+        await runStep("create_form_questions", () =>
+          callJson(
+            `${FORMS_API_BASE}/forms/${formId}:batchUpdate`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                requests: canvas_state.form_fields.map((field, index) => ({
+                  createItem: {
+                    item: {
+                      title: field.label,
+                      questionItem: buildFormQuestion(field).questionItem
+                    },
+                    location: {
+                      index
+                    }
+                  }
+                }))
+              })
+            },
+            "create_form_questions"
+          )
         );
       }
 
-      const sheetPayload = await callJson(
-        `${SHEETS_API_BASE}/spreadsheets`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            properties: {
-              title: `${canvas_state.process_name} Responses`
-            }
-          })
-        },
-        "create_sheet"
+      const sheetPayload = await runStep("create_sheet", () =>
+        callJson(
+          `${SHEETS_API_BASE}/spreadsheets`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              properties: {
+                title: `${canvas_state.process_name} Responses`
+              }
+            })
+          },
+          "create_sheet"
+        )
       );
       const spreadsheetId = String(sheetPayload.spreadsheetId ?? "");
       if (!spreadsheetId) {
-        throw new Error("create_sheet failed: missing spreadsheetId");
+        throw new DeployWorkflowError({
+          failed_step: "create_sheet",
+          completed_steps: completedSteps,
+          cause: new Error("missing spreadsheetId")
+        });
       }
 
       const lastColumn = toColumnLabel(canvas_state.sheet_headers.length);
-      await callJson(
-        `${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/A1:${lastColumn}1?valueInputOption=RAW`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            values: [canvas_state.sheet_headers]
-          })
-        },
-        "set_sheet_headers"
+      await runStep("set_sheet_headers", () =>
+        callJson(
+          `${SHEETS_API_BASE}/spreadsheets/${spreadsheetId}/values/A1:${lastColumn}1?valueInputOption=RAW`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              values: [canvas_state.sheet_headers]
+            })
+          },
+          "set_sheet_headers"
+        )
       );
 
-      const scriptProjectPayload = await callJson(
-        `${APPS_SCRIPT_API_BASE}/projects`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            title: `${canvas_state.process_name} Automation`,
-            parentId: spreadsheetId
-          })
-        },
-        "create_script_project"
+      const scriptProjectPayload = await runStep("create_script_project", () =>
+        callJson(
+          `${APPS_SCRIPT_API_BASE}/projects`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              title: `${canvas_state.process_name} Automation`,
+              parentId: spreadsheetId
+            })
+          },
+          "create_script_project"
+        )
       );
       const scriptId = String(scriptProjectPayload.scriptId ?? "");
       if (!scriptId) {
-        throw new Error("create_script_project failed: missing scriptId");
+        throw new DeployWorkflowError({
+          failed_step: "create_script_project",
+          completed_steps: completedSteps,
+          cause: new Error("missing scriptId")
+        });
       }
 
       const scriptSource = buildAppsScriptSource({
@@ -293,48 +360,61 @@ export function createGoogleWorkspaceDeployer(input: {
         formId
       });
 
-      await callJson(
-        `${APPS_SCRIPT_API_BASE}/projects/${scriptId}/content`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            files: [
-              {
-                name: SCRIPT_FILENAME,
-                type: "SERVER_JS",
-                source: scriptSource
-              },
-              {
-                name: "appsscript",
-                type: "JSON",
-                source: JSON.stringify({
-                  timeZone: "Etc/UTC",
-                  exceptionLogging: "STACKDRIVER",
-                  runtimeVersion: "V8",
-                  oauthScopes: [
-                    "https://www.googleapis.com/auth/forms",
-                    "https://www.googleapis.com/auth/spreadsheets",
-                    "https://www.googleapis.com/auth/script.scriptapp"
-                  ]
-                })
-              }
-            ]
-          })
-        },
-        "set_script_content"
+      await runStep("set_script_content", () =>
+        callJson(
+          `${APPS_SCRIPT_API_BASE}/projects/${scriptId}/content`,
+          {
+            method: "PUT",
+            body: JSON.stringify({
+              files: [
+                {
+                  name: SCRIPT_FILENAME,
+                  type: "SERVER_JS",
+                  source: scriptSource
+                },
+                {
+                  name: "appsscript",
+                  type: "JSON",
+                  source: JSON.stringify({
+                    timeZone: "Etc/UTC",
+                    exceptionLogging: "STACKDRIVER",
+                    runtimeVersion: "V8",
+                    oauthScopes: [
+                      "https://www.googleapis.com/auth/forms",
+                      "https://www.googleapis.com/auth/spreadsheets",
+                      "https://www.googleapis.com/auth/script.scriptapp"
+                    ]
+                  })
+                }
+              ]
+            })
+          },
+          "set_script_content"
+        )
       );
 
-      await callJson(
-        `${APPS_SCRIPT_API_BASE}/scripts/${scriptId}:run`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            function: "createSubmitTrigger",
-            devMode: true
-          })
-        },
-        "create_trigger"
+      const triggerRunPayload = await runStep("create_trigger", () =>
+        callJson(
+          `${APPS_SCRIPT_API_BASE}/scripts/${scriptId}:run`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              function: "createSubmitTrigger",
+              devMode: true
+            })
+          },
+          "create_trigger"
+        )
       );
+
+      // Apps Script run can return HTTP 200 with a logical error payload.
+      if (triggerRunPayload.error) {
+        throw new DeployWorkflowError({
+          failed_step: "create_trigger",
+          completed_steps: completedSteps.filter((step) => step !== "create_trigger"),
+          cause: new Error(JSON.stringify(triggerRunPayload.error))
+        });
+      }
 
       return {
         form_id: formId,

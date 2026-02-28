@@ -4,6 +4,7 @@ import {
   createDeploymentsHandler
 } from "@/lib/server/deployments/handler";
 import type { GoogleWorkspaceDeployer } from "@/lib/server/deployments/google-workspace";
+import { DeployWorkflowError } from "@/lib/server/deployments/google-workspace";
 import {
   createInMemoryDeploymentsStore
 } from "@/lib/server/deployments/store";
@@ -218,5 +219,42 @@ describe("deployments handler", () => {
     expect(persisted?.status).toBe("failed");
     expect(persisted?.error?.code).toBe("UPSTREAM_UNAVAILABLE");
     expect(persisted?.error?.details?.reason).toBe("google_deploy_failed");
+    expect(persisted?.progress?.failed_step).toBe("unknown");
+  });
+
+  test("persists the actual failed workflow step when deployer provides step metadata", async () => {
+    const store = createInMemoryDeploymentsStore();
+    const structuredFailureDeployer: GoogleWorkspaceDeployer = {
+      async deploy() {
+        throw new DeployWorkflowError({
+          failed_step: "create_sheet",
+          completed_steps: ["create_form"],
+          cause: new Error("sheet creation failed")
+        });
+      }
+    };
+
+    const handler = createDeploymentsHandler({
+      store,
+      deployer: structuredFailureDeployer,
+      requestIdFactory: () => "req-structured-failed"
+    });
+
+    const result = await handler({
+      rawBody: buildReadyPayload()
+    });
+
+    expect(result.status).toBe(202);
+    if (result.status !== 202) {
+      throw new Error("expected accepted response");
+    }
+
+    await waitForBackgroundWork();
+
+    const persisted = store.getDeploymentById(result.body.deployment_id);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.progress?.failed_step).toBe("create_sheet");
+    expect(persisted?.progress?.current_step).toBe("create_sheet");
+    expect(persisted?.progress?.completed_steps).toEqual(["create_form"]);
   });
 });
