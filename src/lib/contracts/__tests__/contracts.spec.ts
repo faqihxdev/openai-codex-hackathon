@@ -4,6 +4,8 @@ import {
   AssistantResponseSchema,
   CanvasStateSchema,
   CanvasStatePatchSchema,
+  DeploymentCreateAcceptedSchema,
+  DeploymentCreateRequestSchema,
   DeploymentStatusSchema,
   HealthResponseSchema,
   IntentEventSchema
@@ -276,6 +278,92 @@ describe("shared contract schemas", () => {
         script_id: null
       },
       error: null
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("DeploymentCreateRequestSchema accepts canonical payload", () => {
+    const parsed = DeploymentCreateRequestSchema.safeParse({
+      session_id: "sess-123",
+      canvas_state: {
+        process_name: "Expense Approval",
+        form_fields: [
+          {
+            type: "SHORT_TEXT",
+            label: "Requester Name",
+            required: true
+          }
+        ],
+        sheet_headers: ["Timestamp", "Requester Name", "Edit Link"],
+        flow_steps: [
+          {
+            id: "start",
+            label: "Start",
+            type: "input"
+          }
+        ]
+      },
+      idempotency_key: "deploy-sess-123-v1",
+      assistant_snapshot: {
+        confidence: 0.88,
+        unresolved_questions: [],
+        deploy_ready: true,
+        deploy_readiness_reasons: []
+      }
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  test("DeploymentCreateRequestSchema rejects missing idempotency_key", () => {
+    const parsed = DeploymentCreateRequestSchema.safeParse({
+      session_id: "sess-123",
+      canvas_state: {
+        process_name: "Expense Approval",
+        form_fields: [],
+        sheet_headers: ["Timestamp", "Edit Link"],
+        flow_steps: []
+      },
+      assistant_snapshot: {
+        confidence: 0.88,
+        unresolved_questions: [],
+        deploy_ready: true,
+        deploy_readiness_reasons: []
+      }
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("DeploymentCreateRequestSchema rejects missing assistant_snapshot", () => {
+    const parsed = DeploymentCreateRequestSchema.safeParse({
+      session_id: "sess-123",
+      canvas_state: {
+        process_name: "Expense Approval",
+        form_fields: [],
+        sheet_headers: ["Timestamp", "Edit Link"],
+        flow_steps: []
+      },
+      idempotency_key: "deploy-sess-123-v1"
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("DeploymentCreateAcceptedSchema accepts queued payload", () => {
+    const parsed = DeploymentCreateAcceptedSchema.safeParse({
+      deployment_id: "dep-123",
+      status: "queued"
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  test("DeploymentCreateAcceptedSchema rejects invalid status", () => {
+    const parsed = DeploymentCreateAcceptedSchema.safeParse({
+      deployment_id: "dep-123",
+      status: "running"
     });
 
     expect(parsed.success).toBe(false);
