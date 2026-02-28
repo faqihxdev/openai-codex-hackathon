@@ -91,3 +91,18 @@ pnpm contracts:typecheck
 
 - `#17` should replace placeholder processor with strict validation + one repair pass + deterministic fallback.
 - `#18` should extend success payload with deploy readiness evaluation output once rules are defined.
+
+## Implementation Evidence
+
+- Implemented module path: `src/lib/server/intent/`
+- Tests added:
+  - `src/lib/server/intent/__tests__/schemas.spec.ts`
+  - `src/lib/server/intent/__tests__/auth.spec.ts`
+  - `src/lib/server/intent/__tests__/intent-handler.spec.ts`
+
+Verification commands run:
+
+```bash
+pnpm --filter @openai-codex-hackathon/contracts exec vitest run --root ../.. src/lib/server/intent/__tests__/schemas.spec.ts src/lib/server/intent/__tests__/auth.spec.ts src/lib/server/intent/__tests__/intent-handler.spec.ts
+pnpm --filter @openai-codex-hackathon/contracts typecheck
+```
