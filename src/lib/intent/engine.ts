@@ -7,6 +7,7 @@ import {
   BUSINESS_JUSTIFICATION_LABEL,
   DEFAULT_APPROVAL_THRESHOLD
 } from "@/lib/intent/normalizers";
+import { evaluateDeployReadiness } from "@/lib/intent/deploy-readiness";
 import { cloneCanvasState, getTemplateById } from "@/lib/workspace/templates";
 
 export interface IntentPipelineRequest {
@@ -342,6 +343,11 @@ export function processIntentEvent(request: IntentPipelineRequest): AssistantRes
   const unresolvedQuestions = deriveUnresolvedQuestions(nextCanvasState);
   const nextActions = deriveNextActions(nextCanvasState, unresolvedQuestions);
   const confidence = deriveConfidence(nextCanvasState, unresolvedQuestions);
+  const deployReadiness = evaluateDeployReadiness({
+    canvas_state: nextCanvasState,
+    confidence,
+    unresolved_questions: unresolvedQuestions
+  });
 
   return AssistantResponseSchema.parse({
     chat_reply: buildChatReply(request.intent_event, unresolvedQuestions),
@@ -349,6 +355,8 @@ export function processIntentEvent(request: IntentPipelineRequest): AssistantRes
     canvas_state_patch: buildPatch(request.canvas_state, nextCanvasState),
     confidence,
     unresolved_questions: unresolvedQuestions,
-    next_actions: nextActions
+    next_actions: nextActions,
+    deploy_ready: deployReadiness.deploy_ready,
+    deploy_readiness_reasons: deployReadiness.deploy_readiness_reasons
   });
 }

@@ -160,7 +160,9 @@ describe("intent endpoint schemas", () => {
         canvas_state_patch: [],
         confidence: 0.9,
         unresolved_questions: [],
-        next_actions: ["Add approver field"]
+        next_actions: ["Add approver field"],
+        deploy_ready: true,
+        deploy_readiness_reasons: []
       }
     });
 
@@ -176,7 +178,9 @@ describe("intent endpoint schemas", () => {
         canvas_state_patch: [],
         confidence: 0.9,
         unresolved_questions: [],
-        next_actions: ["Add approver field"]
+        next_actions: ["Add approver field"],
+        deploy_ready: true,
+        deploy_readiness_reasons: []
       },
       extra: "drift"
     });
@@ -213,7 +217,9 @@ describe("intent endpoint schemas", () => {
         canvas_state_patch: [],
         confidence: 0.9,
         unresolved_questions: [],
-        next_actions: ["Add approver field"]
+        next_actions: ["Add approver field"],
+        deploy_ready: true,
+        deploy_readiness_reasons: []
       }
     });
 
@@ -230,5 +236,23 @@ describe("intent endpoint schemas", () => {
         })
       ])
     );
+  });
+
+  test("rejects deploy_ready=false responses that omit readiness reasons", () => {
+    const parsed = IntentSuccessEnvelopeSchema.safeParse({
+      session_id: "sess-123",
+      response: {
+        chat_reply: "Need more detail.",
+        canvas_state: canonicalCanvasState,
+        canvas_state_patch: [],
+        confidence: 0.6,
+        unresolved_questions: ["Who approves requests above 5000?"],
+        next_actions: ["Answer approver question"],
+        deploy_ready: false,
+        deploy_readiness_reasons: []
+      }
+    });
+
+    expect(parsed.success).toBe(false);
   });
 });

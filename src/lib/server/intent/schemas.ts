@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import {
-  AssistantResponseSchema,
+  AssistantResponseBaseSchema,
   CanvasStateSchema,
   FlowStepSchema,
   FormFieldSchema,
@@ -15,9 +15,19 @@ const StrictCanvasStateSchema = CanvasStateSchema.extend({
   flow_steps: z.array(FlowStepSchema.strict())
 }).strict();
 
-const StrictAssistantResponseSchema = AssistantResponseSchema.extend({
+const StrictAssistantResponseSchema = AssistantResponseBaseSchema.extend({
   canvas_state: StrictCanvasStateSchema
-}).strict();
+})
+  .strict()
+  .superRefine((value, context) => {
+    if (!value.deploy_ready && value.deploy_readiness_reasons.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "deploy_readiness_reasons is required when deploy_ready is false",
+        path: ["deploy_readiness_reasons"]
+      });
+    }
+  });
 
 export const ConversationContextSchema = z
   .object({

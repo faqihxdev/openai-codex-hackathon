@@ -90,7 +90,9 @@ describe("shared contract schemas", () => {
       canvas_state_patch: [],
       confidence: 1.2,
       unresolved_questions: [],
-      next_actions: []
+      next_actions: [],
+      deploy_ready: true,
+      deploy_readiness_reasons: []
     });
 
     expect(parsed.success).toBe(false);
@@ -114,7 +116,9 @@ describe("shared contract schemas", () => {
       ],
       confidence: 0.9,
       unresolved_questions: [],
-      next_actions: []
+      next_actions: [],
+      deploy_ready: true,
+      deploy_readiness_reasons: []
     });
 
     expect(parsed.success).toBe(false);
@@ -160,7 +164,29 @@ describe("shared contract schemas", () => {
       confidence: 0.9,
       unresolved_questions: [],
       next_actions: [],
+      deploy_ready: true,
+      deploy_readiness_reasons: [],
       unexpected_field: "contract drift"
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("AssistantResponseSchema rejects deploy_ready=false without readiness reasons", () => {
+    const parsed = AssistantResponseSchema.safeParse({
+      chat_reply: "Need more details.",
+      canvas_state: {
+        process_name: "Expense Approval",
+        form_fields: [],
+        sheet_headers: ["Timestamp", "Edit Link"],
+        flow_steps: []
+      },
+      canvas_state_patch: [],
+      confidence: 0.6,
+      unresolved_questions: ["Who approves requests above 5000?"],
+      next_actions: ["Answer approver question"],
+      deploy_ready: false,
+      deploy_readiness_reasons: []
     });
 
     expect(parsed.success).toBe(false);

@@ -30,16 +30,29 @@ export const CanvasStatePatchSchema = z.discriminatedUnion("op", [
   })
 ]);
 
-export const AssistantResponseSchema = z
+export const AssistantResponseBaseSchema = z
   .object({
     chat_reply: z.string(),
     canvas_state: CanvasStateSchema,
     canvas_state_patch: z.array(CanvasStatePatchSchema),
     confidence: z.number().min(0).max(1),
     unresolved_questions: z.array(z.string()),
-    next_actions: z.array(z.string())
+    next_actions: z.array(z.string()),
+    deploy_ready: z.boolean(),
+    deploy_readiness_reasons: z.array(z.string())
   })
   .strict();
+
+export const AssistantResponseSchema = AssistantResponseBaseSchema
+  .superRefine((value, context) => {
+    if (!value.deploy_ready && value.deploy_readiness_reasons.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "deploy_readiness_reasons is required when deploy_ready is false",
+        path: ["deploy_readiness_reasons"]
+      });
+    }
+  });
 
 export type CanvasPatchOp = z.infer<typeof CanvasPatchOpSchema>;
 export type CanvasStatePatch = z.infer<typeof CanvasStatePatchSchema>;
