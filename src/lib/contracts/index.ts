@@ -12,8 +12,16 @@ export {
 } from "./intent-event";
 export type { IntentEvent, IntentSource, IntentType } from "./intent-event";
 
-export { AssistantResponseSchema, CanvasPatchOpSchema } from "./assistant-response";
-export type { AssistantResponse, CanvasPatchOp } from "./assistant-response";
+export {
+  AssistantResponseSchema,
+  CanvasPatchOpSchema,
+  CanvasStatePatchSchema
+} from "./assistant-response";
+export type {
+  AssistantResponse,
+  CanvasPatchOp,
+  CanvasStatePatch
+} from "./assistant-response";
 
 export {
   DeploymentAssetsSchema,

@@ -8,6 +8,6 @@ export default defineConfig({
     }
   },
   test: {
-    include: ["src/lib/contracts/__tests__/contracts.spec.ts"]
+    include: ["src/**/*.spec.ts"]
   }
 });

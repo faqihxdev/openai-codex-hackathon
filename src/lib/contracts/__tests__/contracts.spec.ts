@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   AssistantResponseSchema,
   CanvasStateSchema,
+  CanvasStatePatchSchema,
   DeploymentStatusSchema,
   IntentEventSchema
 } from "@/lib/contracts";
@@ -113,6 +114,52 @@ describe("shared contract schemas", () => {
       confidence: 0.9,
       unresolved_questions: [],
       next_actions: []
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("CanvasStatePatchSchema rejects add patch without value", () => {
+    const parsed = CanvasStatePatchSchema.safeParse({
+      op: "add",
+      path: "/process_name"
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("CanvasStatePatchSchema rejects replace patch without value", () => {
+    const parsed = CanvasStatePatchSchema.safeParse({
+      op: "replace",
+      path: "/process_name"
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("CanvasStatePatchSchema accepts remove patch without value", () => {
+    const parsed = CanvasStatePatchSchema.safeParse({
+      op: "remove",
+      path: "/process_name"
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  test("AssistantResponseSchema rejects unknown keys", () => {
+    const parsed = AssistantResponseSchema.safeParse({
+      chat_reply: "Patched",
+      canvas_state: {
+        process_name: "Expense Approval",
+        form_fields: [],
+        sheet_headers: [],
+        flow_steps: []
+      },
+      canvas_state_patch: [],
+      confidence: 0.9,
+      unresolved_questions: [],
+      next_actions: [],
+      unexpected_field: "contract drift"
     });
 
     expect(parsed.success).toBe(false);
