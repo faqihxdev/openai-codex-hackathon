@@ -6,7 +6,21 @@ settings:
 
 importers:
 
-  .: {}
+  .:
+    dependencies:
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.10
+        version: 22.19.13
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.8
+        version: 3.2.4(@types/node@22.19.13)
 
   packages/contracts:
     dependencies:

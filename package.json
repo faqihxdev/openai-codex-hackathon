@@ -6,8 +6,18 @@
     "packages/*"
   ],
   "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
     "contracts:build": "pnpm --filter @openai-codex-hackathon/contracts build",
     "contracts:test": "pnpm --filter @openai-codex-hackathon/contracts test",
     "contracts:typecheck": "pnpm --filter @openai-codex-hackathon/contracts typecheck"
+  },
+  "dependencies": {
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
   }
 }
