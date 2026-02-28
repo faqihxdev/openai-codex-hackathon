@@ -1,0 +1,52 @@
+:root {
+  --bg: #f3efe6;
+  --surface: #fffdf8;
+  --surface-2: #efe7da;
+  --ink: #1e1a16;
+  --muted: #6f665c;
+  --line: #d6ccbd;
+  --accent: #0f766e;
+  --accent-2: #d9480f;
+  --success: #2f855a;
+  --warning: #b7791f;
+  --danger: #c53030;
+
+  --radius-card: 12px;
+  --radius-input: 10px;
+  --radius-chip: 999px;
+  --shadow-panel: 0 6px 20px rgba(30, 26, 22, 0.08);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+
+  --h1-size: 44px;
+  --h1-line: 48px;
+  --h2-size: 30px;
+  --h2-line: 36px;
+  --h3-size: 22px;
+  --h3-line: 28px;
+  --body-lg-size: 18px;
+  --body-lg-line: 28px;
+  --body-size: 16px;
+  --body-line: 24px;
+  --meta-size: 13px;
+  --meta-line: 18px;
+
+  --duration-hover: 120ms;
+  --duration-panel: 220ms;
+  --duration-page: 320ms;
+  --ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-hover: 0ms;
+    --duration-panel: 0ms;
+    --duration-page: 0ms;
+  }
+}
