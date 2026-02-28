@@ -13,6 +13,8 @@ import type { DeploymentsStore } from "@/lib/server/deployments/store";
 import {
   createInMemoryDeploymentsStore
 } from "@/lib/server/deployments/store";
+import type { GoogleWorkspaceDeployer } from "@/lib/server/deployments/google-workspace";
+import { DeployWorkflowError } from "@/lib/server/deployments/google-workspace";
 
 function buildReadyPayload() {
   return {
@@ -51,6 +53,24 @@ function buildAuthorizedAuthContext(): DeploymentAuthContext {
     oauth_token_status: "valid",
     oauth_scopes: [...REQUIRED_DEPLOYMENT_OAUTH_SCOPES]
   };
+}
+
+function buildSuccessDeployer(): GoogleWorkspaceDeployer {
+  return {
+    async deploy() {
+      return {
+        form_id: "form-123",
+        spreadsheet_id: "sheet-123",
+        script_id: "script-123"
+      };
+    }
+  };
+}
+
+function waitForBackgroundWork(): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
 }
 
 describe("deployments create handler", () => {
@@ -213,6 +233,103 @@ describe("deployments create handler", () => {
     if (resumed.status === 202) {
       expect(resumed.body.status).toBe("queued");
     }
+  test("marks deployment succeeded and persists created asset IDs", async () => {
+    const store = createInMemoryDeploymentsStore();
+    const handler = createDeploymentsHandler({
+      store,
+      deployer: buildSuccessDeployer(),
+      enableGoogleWorkflow: true,
+      requestIdFactory: () => "req-success"
+    });
+
+    const result = handler({
+      rawBody: buildReadyPayload()
+    });
+
+    expect(result.status).toBe(202);
+    if (result.status !== 202) {
+      throw new Error("expected accepted response");
+    }
+
+    await waitForBackgroundWork();
+
+    const persisted = store.getDeploymentById(result.body.deployment_id);
+    expect(persisted?.status).toBe("succeeded");
+    expect(persisted?.assets).toEqual({
+      form_id: "form-123",
+      spreadsheet_id: "sheet-123",
+      script_id: "script-123"
+    });
+  });
+
+  test("marks deployment failed when google workflow fails", async () => {
+    const store = createInMemoryDeploymentsStore();
+    const failingDeployer: GoogleWorkspaceDeployer = {
+      async deploy() {
+        throw new Error("google api unavailable");
+      }
+    };
+
+    const handler = createDeploymentsHandler({
+      store,
+      deployer: failingDeployer,
+      enableGoogleWorkflow: true,
+      requestIdFactory: () => "req-failed"
+    });
+
+    const result = handler({
+      rawBody: buildReadyPayload()
+    });
+
+    expect(result.status).toBe(202);
+    if (result.status !== 202) {
+      throw new Error("expected accepted response");
+    }
+
+    await waitForBackgroundWork();
+
+    const persisted = store.getDeploymentById(result.body.deployment_id);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.error?.code).toBe("UPSTREAM_UNAVAILABLE");
+    expect(persisted?.error?.details?.reason).toBe("google_deploy_failed");
+    expect(persisted?.progress?.failed_step).toBe("unknown");
+  });
+
+  test("persists the actual failed workflow step when deployer provides step metadata", async () => {
+    const store = createInMemoryDeploymentsStore();
+    const structuredFailureDeployer: GoogleWorkspaceDeployer = {
+      async deploy() {
+        throw new DeployWorkflowError({
+          failed_step: "create_sheet",
+          completed_steps: ["create_form"],
+          cause: new Error("sheet creation failed")
+        });
+      }
+    };
+
+    const handler = createDeploymentsHandler({
+      store,
+      deployer: structuredFailureDeployer,
+      enableGoogleWorkflow: true,
+      requestIdFactory: () => "req-structured-failed"
+    });
+
+    const result = handler({
+      rawBody: buildReadyPayload()
+    });
+
+    expect(result.status).toBe(202);
+    if (result.status !== 202) {
+      throw new Error("expected accepted response");
+    }
+
+    await waitForBackgroundWork();
+
+    const persisted = store.getDeploymentById(result.body.deployment_id);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.progress?.failed_step).toBe("create_sheet");
+    expect(persisted?.progress?.current_step).toBe("create_sheet");
+    expect(persisted?.progress?.completed_steps).toEqual(["create_form"]);
   });
 });
 
@@ -371,6 +488,9 @@ describe("deployments handlers internal errors", () => {
     getDeploymentById() {
       return null;
     },
+    saveDeployment() {
+      throw new Error("save unavailable");
+    },
     advanceDeployment() {
       throw new Error("status unavailable");
     },
@@ -396,8 +516,28 @@ describe("deployments handlers internal errors", () => {
   });
 
   test("returns INTERNAL_ERROR for status handler store failures", () => {
+    const statusThrowingStore: DeploymentsStore = {
+      ...throwingStore,
+      getDeploymentById() {
+        return {
+          deployment_id: "dep-1",
+          status: "queued",
+          assets: {
+            form_id: null,
+            spreadsheet_id: null,
+            script_id: null
+          },
+          error: null,
+          progress: {
+            current_step: "Auth",
+            completed_steps: [],
+            failed_step: null
+          }
+        };
+      }
+    };
     const handler = createDeploymentStatusHandler({
-      store: throwingStore,
+      store: statusThrowingStore,
       requestIdFactory: () => "req-status-throws"
     });
 

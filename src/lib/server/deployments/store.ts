@@ -61,6 +61,7 @@ export type RetryDeploymentResult =
 export interface DeploymentsStore {
   createOrGetDeployment(input: CreateOrGetDeploymentInput): CreateOrGetDeploymentResult;
   getDeploymentById(deployment_id: string): DeploymentStatus | null;
+  saveDeployment(deployment: DeploymentStatus): void;
   advanceDeployment(deployment_id: string): DeploymentStatus | null;
   retryDeployment(deployment_id: string): RetryDeploymentResult;
 }
@@ -247,6 +248,10 @@ export function createInMemoryDeploymentsStore(): DeploymentsStore {
 
     getDeploymentById(deployment_id: string): DeploymentStatus | null {
       return deploymentsById.get(deployment_id) ?? null;
+    },
+
+    saveDeployment(deployment: DeploymentStatus): void {
+      deploymentsById.set(deployment.deployment_id, deployment);
     },
 
     advanceDeployment(deployment_id: string): DeploymentStatus | null {

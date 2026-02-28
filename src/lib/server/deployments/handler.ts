@@ -4,6 +4,18 @@ import { DeploymentStatusSchema, type DeploymentStatus } from "@/lib/contracts";
 import { createApiErrorResponse, type ApiErrorResponseBody } from "@/lib/errors";
 
 import { guardDeploymentAuth, type DeploymentAuthContext } from "./auth";
+import {
+  DEPLOYMENT_PROGRESS_STEPS,
+  createInMemoryDeploymentsStore,
+  createQueuedDeploymentStatus,
+  type DeploymentsStore
+} from "./store";
+import {
+  DeployWorkflowError,
+  createGoogleWorkspaceDeployer,
+  createMockGoogleWorkspaceDeployer,
+  type GoogleWorkspaceDeployer
+} from "./google-workspace";
 import { toCanonicalJson } from "./hash";
 import {
   type DeploymentCreateAccepted,
@@ -13,16 +25,13 @@ import {
   DeploymentCreateRequestSchema,
   DeploymentRetryAcceptedSchema
 } from "./schemas";
-import {
-  createInMemoryDeploymentsStore,
-  createQueuedDeploymentStatus,
-  type DeploymentsStore
-} from "./store";
 
 type RequestIdFactory = () => string;
 
 export interface DeploymentsHandlerDependencies {
   store: DeploymentsStore;
+  deployer?: GoogleWorkspaceDeployer;
+  enableGoogleWorkflow?: boolean;
   requestIdFactory?: RequestIdFactory;
 }
 
@@ -106,8 +115,83 @@ function buildRequestHash(request: DeploymentCreateRequest): string {
   });
 }
 
+function isLegacyProgressStep(step: string | undefined): boolean {
+  return Boolean(step && DEPLOYMENT_PROGRESS_STEPS.includes(step as (typeof DEPLOYMENT_PROGRESS_STEPS)[number]));
+}
+
+async function runDeploymentWorkflow(input: {
+  store: DeploymentsStore;
+  deployer: GoogleWorkspaceDeployer;
+  deployment: DeploymentStatus;
+  canvas_state: DeploymentCreateRequest["canvas_state"];
+}) {
+  const runningStatus: DeploymentStatus = {
+    ...input.deployment,
+    status: "running",
+    progress: {
+      current_step: "create_form",
+      completed_steps: [],
+      failed_step: null
+    },
+    error: null
+  };
+  input.store.saveDeployment(runningStatus);
+
+  try {
+    const assets = await input.deployer.deploy({
+      deployment_id: input.deployment.deployment_id,
+      canvas_state: input.canvas_state
+    });
+
+    input.store.saveDeployment({
+      ...runningStatus,
+      status: "succeeded",
+      assets,
+      progress: {
+        current_step: "completed",
+        completed_steps: [
+          "create_form",
+          "create_sheet",
+          "create_script",
+          "create_trigger"
+        ],
+        failed_step: null
+      }
+    });
+  } catch (error) {
+    const failedStep =
+      error instanceof DeployWorkflowError
+        ? error.failed_step
+        : "unknown";
+    const completedSteps =
+      error instanceof DeployWorkflowError
+        ? error.completed_steps
+        : [];
+
+    input.store.saveDeployment({
+      ...runningStatus,
+      status: "failed",
+      error: {
+        code: "UPSTREAM_UNAVAILABLE",
+        message: "Google Workspace deployment workflow failed.",
+        details: {
+          reason: "google_deploy_failed",
+          error_message: error instanceof Error ? error.message : "unknown_error"
+        }
+      },
+      progress: {
+        current_step: failedStep,
+        completed_steps: completedSteps,
+        failed_step: failedStep
+      }
+    });
+  }
+}
+
 export function createDeploymentsHandler(dependencies: DeploymentsHandlerDependencies) {
   const requestIdFactory = dependencies.requestIdFactory ?? randomUUID;
+  const deployer = dependencies.deployer ?? createMockGoogleWorkspaceDeployer();
+  const enableGoogleWorkflow = dependencies.enableGoogleWorkflow ?? false;
 
   return function handleDeployments(
     input: DeploymentsHandlerInput
@@ -163,6 +247,15 @@ export function createDeploymentsHandler(dependencies: DeploymentsHandlerDepende
         });
       }
 
+      if (enableGoogleWorkflow && result.kind === "created") {
+        void runDeploymentWorkflow({
+          store: dependencies.store,
+          deployer,
+          deployment: result.deployment,
+          canvas_state: request.canvas_state
+        });
+      }
+
       return {
         status: 202,
         body: DeploymentCreateAcceptedSchema.parse({
@@ -213,6 +306,21 @@ export function createDeploymentStatusHandler(
       }
 
       const deployment = dependencies.store.advanceDeployment(input.deployment_id);
+      const existing = dependencies.store.getDeploymentById(input.deployment_id);
+      if (!existing) {
+        return buildError("NOT_FOUND", request_id, {
+          deployment_id: input.deployment_id
+        });
+      }
+
+      const shouldAutoAdvance =
+        existing.status === "queued" ||
+        (existing.status === "running" &&
+          isLegacyProgressStep(existing.progress?.current_step));
+
+      const deployment = shouldAutoAdvance
+        ? dependencies.store.advanceDeployment(input.deployment_id)
+        : existing;
       if (!deployment) {
         return buildError("NOT_FOUND", request_id, {
           deployment_id: input.deployment_id
@@ -299,13 +407,20 @@ export function createDeploymentRetryHandler(
 }
 
 const defaultDeploymentsStore = createInMemoryDeploymentsStore();
+const defaultGoogleAccessToken = process.env.GOOGLE_WORKSPACE_ACCESS_TOKEN?.trim();
+const defaultEnableGoogleWorkflow = Boolean(defaultGoogleAccessToken);
+const defaultDeployer = defaultGoogleAccessToken
+  ? createGoogleWorkspaceDeployer({
+      accessToken: defaultGoogleAccessToken
+    })
+  : createMockGoogleWorkspaceDeployer();
 
-export const handleDeployments = createDeploymentsHandler({
-  store: defaultDeploymentsStore
-});
-export const handleDeploymentStatus = createDeploymentStatusHandler({
-  store: defaultDeploymentsStore
-});
-export const handleDeploymentRetry = createDeploymentRetryHandler({
-  store: defaultDeploymentsStore
-});
+const defaultDependencies: DeploymentsHandlerDependencies = {
+  store: defaultDeploymentsStore,
+  deployer: defaultDeployer,
+  enableGoogleWorkflow: defaultEnableGoogleWorkflow
+};
+
+export const handleDeployments = createDeploymentsHandler(defaultDependencies);
+export const handleDeploymentStatus = createDeploymentStatusHandler(defaultDependencies);
+export const handleDeploymentRetry = createDeploymentRetryHandler(defaultDependencies);
