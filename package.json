@@ -10,6 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "test:ui": "vitest run",
     "contracts:build": "pnpm --filter @openai-codex-hackathon/contracts build",
     "contracts:test": "pnpm --filter @openai-codex-hackathon/contracts test",

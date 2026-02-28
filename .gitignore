@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+.worktrees/
 .next/
 .DS_Store
 .env
