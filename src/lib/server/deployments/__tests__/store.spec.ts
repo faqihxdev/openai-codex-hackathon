@@ -83,6 +83,18 @@ describe("deployments store", () => {
     expect(second.kind).toBe("created");
   });
 
+  test("saves and retrieves deployment updates", () => {
+    const store = createInMemoryDeploymentsStore();
+    const deployment = createQueuedDeploymentStatus("dep-1");
+    store.saveDeployment({
+      ...deployment,
+      status: "running"
+    });
+
+    const persisted = store.getDeploymentById("dep-1");
+    expect(persisted?.status).toBe("running");
+  });
+
   test("advances deployment through steps and populates assets", () => {
     const store = createInMemoryDeploymentsStore();
     store.createOrGetDeployment({
