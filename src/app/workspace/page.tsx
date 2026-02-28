@@ -1,7 +1,7 @@
 "use client";
 
 import * as Tabs from "@radix-ui/react-tabs";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { AssistantResponse } from "@/lib/contracts/assistant-response";
 import { AssistantResponseSchema } from "@/lib/contracts/assistant-response";
@@ -79,6 +79,19 @@ export default function WorkspacePage() {
   const [approverAnswer, setApproverAnswer] = useState(APPROVER_OPTIONS[0]);
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const inFlightRef = useRef(false);
+  const canvasStateRef = useRef(canvasState);
+  const unresolvedQuestionsRef = useRef(assistantResponse.unresolved_questions);
+  const confidenceRef = useRef(assistantResponse.confidence);
+
+  useEffect(() => {
+    canvasStateRef.current = canvasState;
+  }, [canvasState]);
+
+  useEffect(() => {
+    unresolvedQuestionsRef.current = assistantResponse.unresolved_questions;
+    confidenceRef.current = assistantResponse.confidence;
+  }, [assistantResponse]);
 
   const unresolvedCount = assistantResponse.unresolved_questions.length;
   const deployBlocked = unresolvedCount > 0 || busy;
@@ -86,6 +99,11 @@ export default function WorkspacePage() {
   const businessJustificationRequired = isBusinessJustificationRequired(canvasState);
 
   async function dispatchIntent(intentEvent: IntentEvent) {
+    if (inFlightRef.current) {
+      return;
+    }
+
+    inFlightRef.current = true;
     setBusy(true);
     setErrorMessage(null);
 
@@ -98,10 +116,10 @@ export default function WorkspacePage() {
         body: JSON.stringify({
           session_id: sessionId,
           intent_event: intentEvent,
-          canvas_state: canvasState,
+          canvas_state: canvasStateRef.current,
           conversation_context: {
-            unresolved_questions: assistantResponse.unresolved_questions,
-            previous_confidence: assistantResponse.confidence
+            unresolved_questions: unresolvedQuestionsRef.current,
+            previous_confidence: confidenceRef.current
           }
         })
       });
@@ -113,11 +131,15 @@ export default function WorkspacePage() {
       const nextAssistant = AssistantResponseSchema.parse(await response.json());
       setAssistantResponse(nextAssistant);
       setCanvasState(nextAssistant.canvas_state);
+      canvasStateRef.current = nextAssistant.canvas_state;
+      unresolvedQuestionsRef.current = nextAssistant.unresolved_questions;
+      confidenceRef.current = nextAssistant.confidence;
       setIntentHistory((previous) => [intentEvent, ...previous].slice(0, 6));
     } catch (error) {
       const fallbackMessage = error instanceof Error ? error.message : "Unable to process interaction.";
       setErrorMessage(fallbackMessage);
     } finally {
+      inFlightRef.current = false;
       setBusy(false);
     }
   }

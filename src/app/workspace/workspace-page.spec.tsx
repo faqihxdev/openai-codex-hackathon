@@ -1,10 +1,15 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import WorkspacePage from "@/app/workspace/page";
 
 describe("workspace page multimodal interaction", () => {
+  function readLastRequestPayload() {
+    const [, init] = vi.mocked(globalThis.fetch).mock.calls.at(-1)!;
+    return JSON.parse(String(init?.body));
+  }
+
   beforeEach(() => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -59,8 +64,8 @@ describe("workspace page multimodal interaction", () => {
     await user.click(screen.getAllByRole("button", { name: "Use template" })[0]);
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    const [url, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
-    const payload = JSON.parse(String(init?.body));
+    const [url] = vi.mocked(globalThis.fetch).mock.calls[0]!;
+    const payload = readLastRequestPayload();
 
     expect(url).toBe("/api/v1/intent");
     expect(payload.intent_event.source).toBe("template");
@@ -75,11 +80,43 @@ describe("workspace page multimodal interaction", () => {
     await user.click(screen.getAllByRole("button", { name: "Add approval step" })[0]);
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    const [, init] = vi.mocked(globalThis.fetch).mock.calls[0]!;
-    const payload = JSON.parse(String(init?.body));
+    const payload = readLastRequestPayload();
 
     expect(payload.intent_event.source).toBe("card");
     expect(payload.intent_event.intent_type).toBe("add_step");
     expect(payload.intent_event.payload.action).toBe("add_approval_step");
+  });
+
+  it("routes chat submissions to intent API and refreshes UI state", async () => {
+    const user = userEvent.setup();
+    render(<WorkspacePage />);
+
+    expect(screen.getAllByText("1 unresolved").length).toBeGreaterThanOrEqual(1);
+
+    await user.type(screen.getAllByLabelText("Free-form refinement")[0], "approved by Finance Lead");
+    await user.click(screen.getAllByRole("button", { name: "Send chat intent" })[0]);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const payload = readLastRequestPayload();
+    expect(payload.intent_event.source).toBe("chat");
+    expect(payload.intent_event.intent_type).toBe("set_constraint");
+    expect(payload.intent_event.payload.message).toBe("approved by Finance Lead");
+
+    await waitFor(() => {
+      expect(screen.getAllByText("0 unresolved").length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it("routes canvas actions to intent API as normalized events", async () => {
+    const user = userEvent.setup();
+    render(<WorkspacePage />);
+
+    await user.click(screen.getAllByRole("button", { name: "Add review step" })[0]);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const payload = readLastRequestPayload();
+    expect(payload.intent_event.source).toBe("canvas");
+    expect(payload.intent_event.intent_type).toBe("add_step");
+    expect(payload.intent_event.payload.action).toBe("add_canvas_step");
   });
 });
