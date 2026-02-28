@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import type { AssistantResponse } from "@/lib/contracts";
-import { AssistantResponseSchema } from "@/lib/contracts";
 import { createApiErrorResponse, type ApiErrorResponseBody } from "@/lib/errors";
 
 import { type AuthorizeSession, guardIntentAccess, type IntentAuthContext } from "./auth";
@@ -74,17 +73,17 @@ export function createIntentHandler(dependencies: IntentHandlerDependencies) {
       });
     }
 
-    const authResult = await guardIntentAccess({
-      context: input.auth,
-      session_id: parsedRequest.data.session_id,
-      authorizeSession: dependencies.authorizeSession
-    });
-
-    if (!authResult.ok) {
-      return buildError(authResult.code, request_id, authResult.details);
-    }
-
     try {
+      const authResult = await guardIntentAccess({
+        context: input.auth,
+        session_id: parsedRequest.data.session_id,
+        authorizeSession: dependencies.authorizeSession
+      });
+
+      if (!authResult.ok) {
+        return buildError(authResult.code, request_id, authResult.details);
+      }
+
       const response = await dependencies.processIntent({
         request: parsedRequest.data,
         access: {
@@ -93,17 +92,9 @@ export function createIntentHandler(dependencies: IntentHandlerDependencies) {
         }
       });
 
-      const parsedResponse = AssistantResponseSchema.safeParse(response);
-      if (!parsedResponse.success) {
-        return buildError("INTERNAL_ERROR", request_id, {
-          reason: "invalid_assistant_response",
-          issues: parsedResponse.error.issues
-        });
-      }
-
       const successEnvelope = IntentSuccessEnvelopeSchema.safeParse({
         session_id: parsedRequest.data.session_id,
-        response: parsedResponse.data
+        response
       });
 
       if (!successEnvelope.success) {

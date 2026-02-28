@@ -3,7 +3,6 @@ import { describe, expect, test, vi } from "vitest";
 import type { AssistantResponse } from "@/lib/contracts";
 import { createIntentHandler } from "@/lib/server/intent/handler";
 import type { IntentRequest } from "@/lib/server/intent/schemas";
-import { IntentSuccessEnvelopeSchema } from "@/lib/server/intent/schemas";
 
 function buildValidIntentRequest(): IntentRequest {
   return {
@@ -119,6 +118,24 @@ describe("intent handler", () => {
     expect(result.body.error.details.reason).toBe("session_access_denied");
   });
 
+  test("returns INTERNAL_ERROR with unexpected_error reason when authorization throws", async () => {
+    const handler = createIntentHandler({
+      authorizeSession: vi.fn().mockRejectedValue(new Error("auth service unavailable")),
+      processIntent: vi.fn().mockResolvedValue(buildValidAssistantResponse()),
+      requestIdFactory: () => "req-auth-throws"
+    });
+
+    const result = await handler({
+      rawBody: buildValidIntentRequest(),
+      auth: { user_id: "user-123" }
+    });
+
+    expect(result.status).toBe(500);
+    expect(result.body.error.code).toBe("INTERNAL_ERROR");
+    expect(result.body.error.request_id).toBe("req-auth-throws");
+    expect(result.body.error.details.reason).toBe("unexpected_error");
+  });
+
   test("returns INTERNAL_ERROR with unexpected_error reason when processIntent throws", async () => {
     const handler = createIntentHandler({
       authorizeSession: vi.fn().mockResolvedValue(true),
@@ -137,19 +154,18 @@ describe("intent handler", () => {
     expect(result.body.error.details.reason).toBe("unexpected_error");
   });
 
-  test("returns INTERNAL_ERROR with invalid_assistant_response when success envelope validation fails", async () => {
-    const failure = IntentSuccessEnvelopeSchema.safeParse({});
-    if (failure.success) {
-      throw new Error("expected fixture parse to fail");
-    }
-
-    const safeParseSpy = vi
-      .spyOn(IntentSuccessEnvelopeSchema, "safeParse")
-      .mockReturnValueOnce({ success: false, error: failure.error });
-
+  test("returns INTERNAL_ERROR with invalid_assistant_response when processIntent returns malformed payload", async () => {
     const handler = createIntentHandler({
       authorizeSession: vi.fn().mockResolvedValue(true),
-      processIntent: vi.fn().mockResolvedValue(buildValidAssistantResponse()),
+      processIntent: vi.fn().mockResolvedValue({
+        chat_reply: "Malformed response",
+        canvas_state: {
+          process_name: "Expense Approval",
+          form_fields: [],
+          sheet_headers: ["Timestamp"],
+          flow_steps: []
+        }
+      } as unknown as AssistantResponse),
       requestIdFactory: () => "req-invalid-assistant-response"
     });
 
@@ -157,8 +173,6 @@ describe("intent handler", () => {
       rawBody: buildValidIntentRequest(),
       auth: { user_id: "user-123" }
     });
-
-    safeParseSpy.mockRestore();
 
     expect(result.status).toBe(500);
     expect(result.body.error.code).toBe("INTERNAL_ERROR");
