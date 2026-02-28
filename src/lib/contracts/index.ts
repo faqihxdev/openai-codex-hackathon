@@ -35,6 +35,17 @@ export type {
 } from "./deployment-status";
 
 export {
+  DeploymentAssistantSnapshotSchema,
+  DeploymentCreateAcceptedSchema,
+  DeploymentCreateRequestSchema
+} from "./deployment-create";
+export type {
+  DeploymentAssistantSnapshot,
+  DeploymentCreateAccepted,
+  DeploymentCreateRequest
+} from "./deployment-create";
+
+export {
   StarterTemplateSchema,
   TemplatesResponseSchema
 } from "./template";
