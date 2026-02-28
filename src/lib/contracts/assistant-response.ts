@@ -37,7 +37,9 @@ export const AssistantResponseSchema = z
     canvas_state_patch: z.array(CanvasStatePatchSchema),
     confidence: z.number().min(0).max(1),
     unresolved_questions: z.array(z.string()),
-    next_actions: z.array(z.string())
+    next_actions: z.array(z.string()),
+    deploy_ready: z.boolean(),
+    deploy_readiness_reasons: z.array(z.string())
   })
   .strict();
 

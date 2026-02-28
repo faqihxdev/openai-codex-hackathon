@@ -90,10 +90,32 @@ describe("shared contract schemas", () => {
       canvas_state_patch: [],
       confidence: 1.2,
       unresolved_questions: [],
-      next_actions: []
+      next_actions: [],
+      deploy_ready: true,
+      deploy_readiness_reasons: []
     });
 
     expect(parsed.success).toBe(false);
+  });
+
+  test("AssistantResponseSchema accepts canonical payload with deploy readiness fields", () => {
+    const parsed = AssistantResponseSchema.safeParse({
+      chat_reply: "Ready to deploy.",
+      canvas_state: {
+        process_name: "Expense Approval",
+        form_fields: [],
+        sheet_headers: ["Timestamp", "Edit Link"],
+        flow_steps: []
+      },
+      canvas_state_patch: [],
+      confidence: 0.9,
+      unresolved_questions: [],
+      next_actions: ["Deploy"],
+      deploy_ready: true,
+      deploy_readiness_reasons: []
+    });
+
+    expect(parsed.success).toBe(true);
   });
 
   test("AssistantResponseSchema rejects invalid patch operation", () => {
@@ -114,7 +136,9 @@ describe("shared contract schemas", () => {
       ],
       confidence: 0.9,
       unresolved_questions: [],
-      next_actions: []
+      next_actions: [],
+      deploy_ready: true,
+      deploy_readiness_reasons: []
     });
 
     expect(parsed.success).toBe(false);
@@ -160,7 +184,47 @@ describe("shared contract schemas", () => {
       confidence: 0.9,
       unresolved_questions: [],
       next_actions: [],
+      deploy_ready: true,
+      deploy_readiness_reasons: [],
       unexpected_field: "contract drift"
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("AssistantResponseSchema rejects payload missing deploy_ready", () => {
+    const parsed = AssistantResponseSchema.safeParse({
+      chat_reply: "Patched",
+      canvas_state: {
+        process_name: "Expense Approval",
+        form_fields: [],
+        sheet_headers: [],
+        flow_steps: []
+      },
+      canvas_state_patch: [],
+      confidence: 0.9,
+      unresolved_questions: [],
+      next_actions: [],
+      deploy_readiness_reasons: []
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  test("AssistantResponseSchema rejects payload missing deploy_readiness_reasons", () => {
+    const parsed = AssistantResponseSchema.safeParse({
+      chat_reply: "Patched",
+      canvas_state: {
+        process_name: "Expense Approval",
+        form_fields: [],
+        sheet_headers: [],
+        flow_steps: []
+      },
+      canvas_state_patch: [],
+      confidence: 0.9,
+      unresolved_questions: [],
+      next_actions: [],
+      deploy_ready: true
     });
 
     expect(parsed.success).toBe(false);

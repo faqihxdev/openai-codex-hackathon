@@ -113,7 +113,12 @@ function buildDeterministicFallbackResponse(
     canvas_state_patch: [],
     confidence: 0.2,
     unresolved_questions: [question],
-    next_actions: ["Answer clarifying question", "Retry intent update"]
+    next_actions: ["Answer clarifying question", "Retry intent update"],
+    deploy_ready: false,
+    deploy_readiness_reasons: [
+      "Critical unresolved questions remain.",
+      "Fallback response requires additional clarification before deployment."
+    ]
   };
 }
 

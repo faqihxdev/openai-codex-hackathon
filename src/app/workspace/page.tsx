@@ -53,7 +53,12 @@ function createInitialAssistantResponse(canvasState: CanvasState): AssistantResp
     canvas_state_patch: [],
     confidence: 0.74,
     unresolved_questions: [APPROVER_QUESTION],
-    next_actions: ["Add approval step", "Mark business justification as required"]
+    next_actions: ["Add approval step", "Mark business justification as required"],
+    deploy_ready: false,
+    deploy_readiness_reasons: [
+      "Confidence below deployment threshold (0.75).",
+      "Critical unresolved questions remain."
+    ]
   };
 }
 
