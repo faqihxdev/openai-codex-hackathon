@@ -13,6 +13,7 @@ export {
 export type { IntentEvent, IntentSource, IntentType } from "./intent-event";
 
 export {
+  AssistantResponseBaseSchema,
   AssistantResponseSchema,
   CanvasPatchOpSchema,
   CanvasStatePatchSchema

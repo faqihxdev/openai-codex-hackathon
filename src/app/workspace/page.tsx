@@ -21,6 +21,7 @@ import {
   normalizeSetApprovalThresholdIntent,
   normalizeTemplateIntent
 } from "@/lib/intent/normalizers";
+import { evaluateDeployReadiness } from "@/lib/intent/deploy-readiness";
 import { cloneCanvasState, getDefaultCanvasState, WORKSPACE_TEMPLATES } from "@/lib/workspace/templates";
 
 import { Panel, PrimaryAction, StatusChip } from "@/components/primitives";
@@ -47,18 +48,23 @@ const deploymentStatus: DeploymentStatus = {
 };
 
 function createInitialAssistantResponse(canvasState: CanvasState): AssistantResponse {
+  const unresolvedQuestions = [APPROVER_QUESTION];
+  const confidence = 0.74;
+  const deployReadiness = evaluateDeployReadiness({
+    canvas_state: canvasState,
+    confidence,
+    unresolved_questions: unresolvedQuestions
+  });
+
   return {
     chat_reply: `Refine this workflow using cards, templates, or canvas edits. ${APPROVER_QUESTION}`,
     canvas_state: canvasState,
     canvas_state_patch: [],
-    confidence: 0.74,
-    unresolved_questions: [APPROVER_QUESTION],
+    confidence,
+    unresolved_questions: unresolvedQuestions,
     next_actions: ["Add approval step", "Mark business justification as required"],
-    deploy_ready: false,
-    deploy_readiness_reasons: [
-      "Confidence below deployment threshold (0.75).",
-      "Critical unresolved questions remain."
-    ]
+    deploy_ready: deployReadiness.deploy_ready,
+    deploy_readiness_reasons: deployReadiness.deploy_readiness_reasons
   };
 }
 
@@ -100,9 +106,13 @@ export default function WorkspacePage() {
   }, [assistantResponse]);
 
   const unresolvedCount = assistantResponse.unresolved_questions.length;
-  const deployBlocked = unresolvedCount > 0 || busy;
+  const deployBlocked = !assistantResponse.deploy_ready || busy;
   const approvalThresholdEnabled = hasThreshold(canvasState);
   const businessJustificationRequired = isBusinessJustificationRequired(canvasState);
+  const deployReadinessReasons = assistantResponse.deploy_readiness_reasons;
+  const additionalReadinessReasons = deployReadinessReasons.filter(
+    (reason) => !reason.startsWith("Resolve unresolved questions")
+  );
 
   function commitCanvasState(nextCanvasState: CanvasState) {
     setCanvasState(nextCanvasState);
@@ -283,41 +293,54 @@ export default function WorkspacePage() {
 
   const questionsPanel = (
     <Panel title="Questions" subtitle="Resolve blockers before deploy" variant="default">
-      {assistantResponse.unresolved_questions.length === 0 ? (
+      {assistantResponse.unresolved_questions.length === 0 && deployReadinessReasons.length === 0 ? (
         <p className="text-sm text-ink">No open blockers. You can proceed to deploy.</p>
       ) : (
-        <ul className="space-y-3">
-          {assistantResponse.unresolved_questions.map((question, index) => (
-            <li key={`${question}-${index}`} className="rounded-control border border-line bg-surface-2 p-3">
-              <p className="text-sm text-ink">{question}</p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-                <label htmlFor={`approver-answer-${index}`} className="sr-only">
-                  Select approver
-                </label>
-                <select
-                  id={`approver-answer-${index}`}
-                  value={approverAnswer}
-                  onChange={(event) => setApproverAnswer(event.target.value)}
-                  className="min-h-11 rounded-control border border-line bg-surface px-3 text-sm text-ink"
-                  disabled={busy}
-                >
-                  {APPROVER_OPTIONS.map((approverOption) => (
-                    <option key={approverOption} value={approverOption}>
-                      {approverOption}
-                    </option>
-                  ))}
-                </select>
-                <PrimaryAction
-                  className="w-full sm:w-auto"
-                  disabled={busy}
-                  onClick={() => void dispatchIntent(normalizeAnswerApproverIntent(approverAnswer))}
-                >
-                  Answer with control
-                </PrimaryAction>
-              </div>
-            </li>
-          ))}
-        </ul>
+        <div className="space-y-3">
+          {assistantResponse.unresolved_questions.length > 0 ? (
+            <ul className="space-y-3">
+              {assistantResponse.unresolved_questions.map((question, index) => (
+                <li key={`${question}-${index}`} className="rounded-control border border-line bg-surface-2 p-3">
+                  <p className="text-sm text-ink">{question}</p>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <label htmlFor={`approver-answer-${index}`} className="sr-only">
+                      Select approver
+                    </label>
+                    <select
+                      id={`approver-answer-${index}`}
+                      value={approverAnswer}
+                      onChange={(event) => setApproverAnswer(event.target.value)}
+                      className="min-h-11 rounded-control border border-line bg-surface px-3 text-sm text-ink"
+                      disabled={busy}
+                    >
+                      {APPROVER_OPTIONS.map((approverOption) => (
+                        <option key={approverOption} value={approverOption}>
+                          {approverOption}
+                        </option>
+                      ))}
+                    </select>
+                    <PrimaryAction
+                      className="w-full sm:w-auto"
+                      disabled={busy}
+                      onClick={() => void dispatchIntent(normalizeAnswerApproverIntent(approverAnswer))}
+                    >
+                      Answer with control
+                    </PrimaryAction>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {additionalReadinessReasons.length > 0 ? (
+            <ul className="space-y-2">
+              {additionalReadinessReasons.map((reason, index) => (
+                <li key={`${reason}-${index}`} className="rounded-control border border-warning bg-surface-2 p-3 text-sm text-ink">
+                  {reason}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       )}
     </Panel>
   );
@@ -436,7 +459,7 @@ export default function WorkspacePage() {
     <Panel title="Deploy" subtitle="Auth -> Form -> Sheet -> Script -> Trigger" variant="tinted">
       <p className="text-sm text-ink">Current step: {deploymentStatus.progress?.current_step}</p>
       <p className="mt-2 text-meta text-muted">
-        {deployBlocked ? "Resolve unresolved questions before deployment starts." : "Ready for deployment."}
+        {deployBlocked ? deployReadinessReasons[0] ?? "Resolve blockers before deployment starts." : "Ready for deployment."}
       </p>
     </Panel>
   );

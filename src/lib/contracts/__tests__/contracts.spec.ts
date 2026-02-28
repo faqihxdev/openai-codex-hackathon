@@ -192,19 +192,20 @@ describe("shared contract schemas", () => {
     expect(parsed.success).toBe(false);
   });
 
-  test("AssistantResponseSchema rejects payload missing deploy_ready", () => {
+  test("AssistantResponseSchema rejects deploy_ready=false without readiness reasons", () => {
     const parsed = AssistantResponseSchema.safeParse({
-      chat_reply: "Patched",
+      chat_reply: "Need more details.",
       canvas_state: {
         process_name: "Expense Approval",
         form_fields: [],
-        sheet_headers: [],
+        sheet_headers: ["Timestamp", "Edit Link"],
         flow_steps: []
       },
       canvas_state_patch: [],
-      confidence: 0.9,
-      unresolved_questions: [],
-      next_actions: [],
+      confidence: 0.6,
+      unresolved_questions: ["Who approves requests above 5000?"],
+      next_actions: ["Answer approver question"],
+      deploy_ready: false,
       deploy_readiness_reasons: []
     });
 

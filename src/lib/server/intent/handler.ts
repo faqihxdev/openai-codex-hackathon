@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AssistantResponse } from "@/lib/contracts";
 import { createApiErrorResponse, type ApiErrorResponseBody } from "@/lib/errors";
+import { evaluateDeployReadiness } from "@/lib/intent/deploy-readiness";
 import type { ZodIssue } from "zod";
 
 import { type AuthorizeSession, guardIntentAccess, type IntentAuthContext } from "./auth";
@@ -106,6 +107,13 @@ function buildDeterministicFallbackResponse(
   request: IntentRequest
 ): AssistantResponse {
   const question = getFallbackQuestion(request.intent_event.intent_type);
+  const unresolvedQuestions = [question];
+  const confidence = 0.2;
+  const deployReadiness = evaluateDeployReadiness({
+    canvas_state: request.canvas_state,
+    confidence,
+    unresolved_questions: unresolvedQuestions
+  });
 
   return {
     chat_reply: `I could not safely apply that update yet. ${question}`,
