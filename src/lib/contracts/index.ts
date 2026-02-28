@@ -42,3 +42,18 @@ export type {
   StarterTemplate,
   TemplatesResponse
 } from "./template";
+
+export {
+  HealthDependencySchema,
+  HealthDependencyStatusSchema,
+  HealthResponseSchema,
+  HealthStatusSchema,
+  HealthSummarySchema
+} from "./health";
+export type {
+  HealthDependency,
+  HealthDependencyStatus,
+  HealthResponse,
+  HealthStatus,
+  HealthSummary
+} from "./health";
