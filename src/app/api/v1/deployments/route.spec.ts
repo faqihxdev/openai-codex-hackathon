@@ -1,14 +1,35 @@
 import { describe, expect, test } from "vitest";
 
 import { DeploymentCreateAcceptedSchema } from "@/lib/contracts";
+import { REQUIRED_DEPLOYMENT_OAUTH_SCOPES } from "@/lib/server/deployments";
 
 import { POST } from "./route";
 
-function buildRequest(payload: unknown): Request {
+function buildAuthHeaders(
+  overrides?: Partial<{
+    user_id: string;
+    oauth_token_status: "valid" | "missing" | "expired";
+    oauth_scopes: string[];
+  }>
+): Record<string, string> {
+  return {
+    "x-user-id": overrides?.user_id ?? "user-route-1",
+    "x-oauth-token-status": overrides?.oauth_token_status ?? "valid",
+    "x-oauth-scopes": (overrides?.oauth_scopes ?? [
+      ...REQUIRED_DEPLOYMENT_OAUTH_SCOPES
+    ]).join(" ")
+  };
+}
+
+function buildRequest(
+  payload: unknown,
+  authOverrides?: Parameters<typeof buildAuthHeaders>[0]
+): Request {
   return new Request("http://localhost/api/v1/deployments", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...buildAuthHeaders(authOverrides)
     },
     body: JSON.stringify(payload)
   });
@@ -91,5 +112,26 @@ describe("POST /api/v1/deployments", () => {
     expect(response.status).toBe(409);
     expect(body.error.code).toBe("CONFLICT");
   });
-});
 
+  test("returns recoverable UNAUTHORIZED and supports resume after re-auth", async () => {
+    const payload = buildReadyPayload("route-reauth-resume-v1");
+
+    const blocked = await POST(
+      buildRequest(payload, {
+        oauth_token_status: "expired"
+      })
+    );
+    const blockedBody = await blocked.json();
+    expect(blocked.status).toBe(401);
+    expect(blockedBody.error.code).toBe("UNAUTHORIZED");
+    expect(blockedBody.error.retryable).toBe(true);
+    expect(blockedBody.error.details.reason).toBe("expired_oauth_token");
+    expect(blockedBody.error.details.resume_context).toEqual({
+      session_id: payload.session_id,
+      idempotency_key: payload.idempotency_key
+    });
+
+    const resumed = await POST(buildRequest(payload));
+    expect(resumed.status).toBe(202);
+  });
+});

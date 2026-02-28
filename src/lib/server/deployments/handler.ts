@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { DeploymentStatusSchema, type DeploymentStatus } from "@/lib/contracts";
 import { createApiErrorResponse, type ApiErrorResponseBody } from "@/lib/errors";
 
+import { guardDeploymentAuth, type DeploymentAuthContext } from "./auth";
 import {
   DEPLOYMENT_PROGRESS_STEPS,
   createInMemoryDeploymentsStore,
@@ -36,6 +37,7 @@ export interface DeploymentsHandlerDependencies {
 
 export interface DeploymentsHandlerInput {
   rawBody: unknown;
+  auth: DeploymentAuthContext;
 }
 
 export type DeploymentsHandlerSuccessResult = {
@@ -54,6 +56,7 @@ export type DeploymentsHandlerResult =
 
 export interface DeploymentStatusHandlerInput {
   deployment_id: string;
+  auth: DeploymentAuthContext;
 }
 
 export type DeploymentStatusHandlerSuccessResult = {
@@ -67,6 +70,7 @@ export type DeploymentStatusHandlerResult =
 
 export interface DeploymentRetryHandlerInput {
   deployment_id: string;
+  auth: DeploymentAuthContext;
 }
 
 export type DeploymentRetryHandlerSuccessResult = {
@@ -80,18 +84,21 @@ export type DeploymentRetryHandlerResult =
 
 function buildError(
   code:
+    | "UNAUTHORIZED"
     | "INVALID_SCHEMA"
     | "DEPLOY_NOT_READY"
     | "CONFLICT"
     | "NOT_FOUND"
     | "INTERNAL_ERROR",
   request_id: string,
-  details: Record<string, unknown>
+  details: Record<string, unknown>,
+  retryable?: boolean
 ): DeploymentsHandlerErrorResult {
   return createApiErrorResponse({
     code,
     request_id,
-    details
+    details,
+    retryable
   });
 }
 
@@ -200,6 +207,22 @@ export function createDeploymentsHandler(dependencies: DeploymentsHandlerDepende
 
     try {
       const request = parsedRequest.data;
+      const authResult = guardDeploymentAuth({
+        context: input.auth,
+        resume_context: {
+          session_id: request.session_id,
+          idempotency_key: request.idempotency_key
+        }
+      });
+      if (!authResult.ok) {
+        return buildError(
+          authResult.code,
+          request_id,
+          authResult.details,
+          authResult.retryable
+        );
+      }
+
       if (!request.assistant_snapshot.deploy_ready) {
         return buildError("DEPLOY_NOT_READY", request_id, {
           session_id: request.session_id,
@@ -267,6 +290,22 @@ export function createDeploymentStatusHandler(
     }
 
     try {
+      const authResult = guardDeploymentAuth({
+        context: input.auth,
+        resume_context: {
+          deployment_id: input.deployment_id
+        }
+      });
+      if (!authResult.ok) {
+        return buildError(
+          authResult.code,
+          request_id,
+          authResult.details,
+          authResult.retryable
+        );
+      }
+
+      const deployment = dependencies.store.advanceDeployment(input.deployment_id);
       const existing = dependencies.store.getDeploymentById(input.deployment_id);
       if (!existing) {
         return buildError("NOT_FOUND", request_id, {
@@ -320,6 +359,21 @@ export function createDeploymentRetryHandler(
     }
 
     try {
+      const authResult = guardDeploymentAuth({
+        context: input.auth,
+        resume_context: {
+          deployment_id: input.deployment_id
+        }
+      });
+      if (!authResult.ok) {
+        return buildError(
+          authResult.code,
+          request_id,
+          authResult.details,
+          authResult.retryable
+        );
+      }
+
       const result = dependencies.store.retryDeployment(input.deployment_id);
 
       if (result.kind === "not_found") {

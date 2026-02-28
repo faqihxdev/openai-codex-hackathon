@@ -5,16 +5,26 @@ import {
   DeploymentRetryAcceptedSchema,
   DeploymentStatusSchema
 } from "@/lib/contracts";
+import { REQUIRED_DEPLOYMENT_OAUTH_SCOPES } from "@/lib/server/deployments";
 
 import { POST as createDeployment } from "../../route";
 import { GET as getDeploymentStatus } from "../route";
 import { POST } from "./route";
 
+function buildAuthHeaders(): Record<string, string> {
+  return {
+    "x-user-id": "user-retry-route",
+    "x-oauth-token-status": "valid",
+    "x-oauth-scopes": [...REQUIRED_DEPLOYMENT_OAUTH_SCOPES].join(" ")
+  };
+}
+
 function buildCreateRequest(idempotency_key: string): Request {
   return new Request("http://localhost/api/v1/deployments", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      ...buildAuthHeaders()
     },
     body: JSON.stringify({
       session_id: "sess-retry-route",
@@ -64,13 +74,17 @@ describe("POST /api/v1/deployments/{deployment_id}/retry", () => {
 
     for (let index = 0; index < 6; index += 1) {
       await getDeploymentStatus(
-        new Request("http://localhost"),
+        new Request("http://localhost", {
+          headers: buildAuthHeaders()
+        }),
         buildRouteContext(created.deployment_id)
       );
     }
 
     const failedResponse = await getDeploymentStatus(
-      new Request("http://localhost"),
+      new Request("http://localhost", {
+        headers: buildAuthHeaders()
+      }),
       buildRouteContext(created.deployment_id)
     );
     const failedPayload = DeploymentStatusSchema.parse(await failedResponse.json());
@@ -78,7 +92,10 @@ describe("POST /api/v1/deployments/{deployment_id}/retry", () => {
     expect(failedPayload.progress?.failed_step).toBe("Script");
 
     const retryResponse = await POST(
-      new Request("http://localhost", { method: "POST" }),
+      new Request("http://localhost", {
+        method: "POST",
+        headers: buildAuthHeaders()
+      }),
       buildRouteContext(created.deployment_id)
     );
 
@@ -95,7 +112,10 @@ describe("POST /api/v1/deployments/{deployment_id}/retry", () => {
     const created = DeploymentCreateAcceptedSchema.parse(await createResponse.json());
 
     const response = await POST(
-      new Request("http://localhost", { method: "POST" }),
+      new Request("http://localhost", {
+        method: "POST",
+        headers: buildAuthHeaders()
+      }),
       buildRouteContext(created.deployment_id)
     );
     const body = await response.json();

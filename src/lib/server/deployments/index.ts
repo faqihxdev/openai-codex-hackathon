@@ -1,3 +1,4 @@
+export * from "./auth";
 export * from "./handler";
 export * from "./google-workspace";
 export * from "./schemas";
