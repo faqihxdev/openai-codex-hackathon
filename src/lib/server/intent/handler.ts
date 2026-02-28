@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { AssistantResponse } from "@/lib/contracts";
 import { AssistantResponseSchema } from "@/lib/contracts";
-import { createApiErrorResponse, type ApiErrorResponseBody } from "../../../../packages/contracts/src/errors/index";
+import { createApiErrorResponse, type ApiErrorResponseBody } from "@/lib/errors";
 
 import { type AuthorizeSession, guardIntentAccess, type IntentAuthContext } from "./auth";
 import {
@@ -101,14 +101,21 @@ export function createIntentHandler(dependencies: IntentHandlerDependencies) {
         });
       }
 
-      const successEnvelope = IntentSuccessEnvelopeSchema.parse({
+      const successEnvelope = IntentSuccessEnvelopeSchema.safeParse({
         session_id: parsedRequest.data.session_id,
         response: parsedResponse.data
       });
 
+      if (!successEnvelope.success) {
+        return buildError("INTERNAL_ERROR", request_id, {
+          reason: "invalid_assistant_response",
+          issues: successEnvelope.error.issues
+        });
+      }
+
       return {
         status: 200,
-        body: successEnvelope
+        body: successEnvelope.data
       };
     } catch (error) {
       return buildError("INTERNAL_ERROR", request_id, {
