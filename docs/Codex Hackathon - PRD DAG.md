@@ -69,6 +69,7 @@ Acceptance criteria:
 Outputs:
 
 - Contract file(s), env template, baseline route map.
+- 2026-02-28 update: shared contracts implemented in `src/lib/contracts/*` and imported by both `src/lib/client/contracts.ts` and `src/lib/server/contracts.ts`; validation coverage is in `src/lib/contracts/__tests__/contracts.spec.ts`.
 
 ### PRD-01: Workspace Shell and Style Tokens (Must)
 
